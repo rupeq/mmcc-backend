@@ -21,3 +21,11 @@ class UserAlreadyExists(Exception):
     """
 
     pass
+
+
+class UserIsNotActive(Exception):
+    """
+    Exception raised when an operation is attempted on a user account that is not active.
+    """
+
+    pass

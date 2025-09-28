@@ -1,6 +1,7 @@
 import logging
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import verify_password, hash_password
@@ -8,6 +9,7 @@ from src.users.db_utils.exceptions import (
     PasswordDoesNotMatch,
     UserNotFound,
     UserAlreadyExists,
+    UserIsNotActive,
 )
 from src.users.models.users import Users
 
@@ -92,6 +94,7 @@ async def create_user(
 
     Raises:
         UserAlreadyExists: If a user with the given email already exists.
+        UserIsNotActive: If a user exists with a is_active=False.
     """
     logger.debug("Trying to create user (email: %s)", email)
 
@@ -100,15 +103,23 @@ async def create_user(
         logger.debug("Found user by email (email: %s), creation failed.", email)
         raise UserAlreadyExists()
     except UserNotFound:
-        user = Users(
-            email=email,
-            password_hash=hash_password(password),
-            is_active=True,
-        )
-        session.add(user)
+        pass
+
+    user = Users(
+        email=email,
+        password_hash=hash_password(password),
+        is_active=True,
+    )
+    session.add(user)
+
+    try:
         await session.commit()
-        logger.debug("Created user by email (email: %s).", email)
-        return user
+    except IntegrityError:
+        logger.debug("Found inactive user (email: %s)", email)
+        raise UserIsNotActive()
+
+    logger.debug("Created user by email (email: %s).", email)
+    return user
 
 
 async def delete_user(session: AsyncSession, *, email: str) -> None:

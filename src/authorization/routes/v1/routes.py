@@ -14,7 +14,12 @@ from src.authorization.routes.v1.utils import (
     get_response_with_tokens,
 )
 from src.core.db_session import get_session
-from src.users.db_utils.exceptions import UserNotFound, PasswordDoesNotMatch
+from src.users.db_utils.exceptions import (
+    UserNotFound,
+    PasswordDoesNotMatch,
+    UserAlreadyExists,
+    UserIsNotActive,
+)
 from src.users.db_utils.users import (
     get_user_by_credentials,
     create_user,
@@ -82,9 +87,22 @@ async def signup(
     Returns:
         SignUpResponseSchema: The response containing the email of the newly created user.
     """
-    return await create_user(
-        session, email=str(body.email), password=body.password
-    )
+    try:
+        return await create_user(
+            session, email=str(body.email), password=body.password
+        )
+    except UserAlreadyExists:
+        response = JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": "User with this email already exists."},
+        )
+        return response
+    except UserIsNotActive:
+        response = JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": "User is not active. Reactivate your account."},
+        )
+        return response
 
 
 @router.put("/access-token")
