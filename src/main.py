@@ -10,7 +10,11 @@ from src.core.logging import configure_logging
 
 configure_logging()
 app = FastAPI(
-    debug=get_settings().service.debug, title=get_settings().service.app_name
+    debug=get_settings().service.debug,
+    title=get_settings().service.app_name,
+    docs_url="/docs" if get_settings().service.debug else None,
+    redoc_url="/redoc" if get_settings().service.debug else None,
+    openapi_url="/openapi" if get_settings().service.debug else None,
 )
 
 
