@@ -3,7 +3,7 @@ from functools import lru_cache
 from typing import Literal, Any
 
 from another_fastapi_jwt_auth import AuthJWT
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl
 
 from src.authorization.config import (
     Settings as AuthorizationSettings,
@@ -32,14 +32,6 @@ class ServiceSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(__file__), ".service.env")
     )
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def split_origins(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [o.strip() for o in v.split(",") if o.strip()]
-
-        return v
 
     @property
     def debug(self) -> bool:
