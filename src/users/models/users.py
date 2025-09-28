@@ -7,6 +7,18 @@ from src.core.model_base import Base
 
 
 class Users(Base):
+    """
+    SQLAlchemy model for the 'users' table.
+
+    Attributes:
+        id (Mapped[uuid.UUID]): The unique identifier for the user (primary key).
+        email (Mapped[str]): The user's email address, unique and indexed.
+        password_hash (Mapped[str]): The hashed password of the user.
+        is_active (Mapped[bool]): Flag indicating if the user account is active.
+        created_at (Mapped["DateTime"]): Timestamp of when the user was created.
+        updated_at (Mapped["DateTime"]): Timestamp of the last update to the user's record.
+    """
+
     id: Mapped[uuid.UUID] = mapped_column(default=uuid.uuid4, primary_key=True)
 
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)

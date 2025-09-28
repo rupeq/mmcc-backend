@@ -1,7 +1,7 @@
 import logging
 import logging.config
 import sys
-from typing import Any, Dict
+from typing import Any
 
 import structlog
 from pythonjsonlogger import json as logging_json
@@ -9,31 +9,90 @@ from pythonjsonlogger import json as logging_json
 from src.config import get_settings
 
 
-def add_service_info(_, __, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+def add_service_info(_, __, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add service and environment information to the log event dictionary.
+
+    Args:
+        _ (Any): Unused.
+        __ (Any): Unused.
+        event_dict (dict[str, Any]): The log event dictionary.
+
+    Returns:
+        dict[str, Any]: The modified log event dictionary with service and environment info.
+    """
     event_dict.setdefault("service", "smo-sim-api")
     event_dict.setdefault("env", get_settings().service.env)
     return event_dict
 
 
-def add_log_level(logger, method_name, event_dict):
+def add_log_level(
+    _, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Add the log level to the log event dictionary.
+
+    Args:
+        _ (Any): Unused.
+        method_name (str): The name of the logging method (e.g., "info", "debug").
+        event_dict (dict[str, Any]): The log event dictionary.
+
+    Returns:
+        dict[str, Any]: The modified log event dictionary with the log level.
+    """
     event_dict["level"] = method_name.upper()
     return event_dict
 
 
-def add_timestamp(_, __, event_dict):
+def add_timestamp(_, __, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Adds an ISO-formatted timestamp to the log event dictionary.
+
+    Args:
+        _ (Any): Unused.
+        __ (Any): Unused.
+        event_dict (dict[str, Any]): The log event dictionary.
+
+    Returns:
+        dict[str, Any]: The modified log event dictionary with the timestamp.
+    """
     event_dict["timestamp"] = structlog.processors.TimeStamper(fmt="iso")(
         None, "", {}
     )["timestamp"]
     return event_dict
 
 
-def add_logger_name(logger, _, event_dict):
+def add_logger_name(
+    logger: logging.Logger, _, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Add the logger's name to the log event dictionary.
+
+    Args:
+        logger (logging.Logger): The logger instance.
+        _ (Any): Unused.
+        event_dict (dict[str, Any]): The log event dictionary.
+
+    Returns:
+        dict[str, Any]: The modified log event dictionary with the logger's name.
+    """
     if logger:
         event_dict["logger"] = logger.name
     return event_dict
 
 
-def add_callsite(_, __, event_dict: dict):
+def add_callsite(_, __, event_dict: dict[str, Any]) -> dict[str, Any]:
+    """
+    Add callsite information (module, function, line number) to the log event dictionary.
+
+    Args:
+        _ (Any): Unused.
+        __ (Any): Unused.
+        event_dict (dict[str, Any]): The log event dictionary.
+
+    Returns:
+        dict[str, Any]: The modified log event dictionary with callsite information.
+    """
     record = event_dict.get("_record")
     if record:
         event_dict["module"] = record.module
@@ -43,6 +102,13 @@ def add_callsite(_, __, event_dict: dict):
 
 
 def configure_logging() -> None:
+    """
+    Configures the application's logging using structlog.
+
+    This function sets up a shared set of processors for structlog,
+    configures a console renderer (JSON for production, pretty for dev),
+    and sets up a StreamHandler with a custom formatter for root logger.
+    """
     log_level = get_settings().logger_settings.log_level.upper()
     is_dev = (
         get_settings().service.env == "dev"
@@ -123,6 +189,13 @@ def configure_logging() -> None:
 def bind_request_context(
     request_id: str | None = None, user_id: str | None = None
 ) -> None:
+    """
+    Bind request-specific context variables for structured logging.
+
+    Args:
+        request_id (str | None): The ID of the current request. Defaults to None.
+        user_id (str | None): The ID of the current user. Defaults to None.
+    """
     structlog.contextvars.clear_contextvars()
     if request_id:
         structlog.contextvars.bind_contextvars(request_id=request_id)

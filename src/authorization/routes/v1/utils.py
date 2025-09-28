@@ -7,6 +7,16 @@ from src.config import get_settings
 
 
 def create_tokens(authorize: AuthJWT, *, email: str) -> tuple[str, str]:
+    """
+    Create access and refresh tokens for a given user email.
+
+    Args:
+        authorize (AuthJWT): The AuthJWT instance for token creation.
+        email (str): The email of the user.
+
+    Returns:
+        tuple[str, str]: A tuple containing the access token and the refresh token.
+    """
     return (
         authorize.create_access_token(
             subject=email,
@@ -27,6 +37,18 @@ def create_tokens(authorize: AuthJWT, *, email: str) -> tuple[str, str]:
 def get_response_with_tokens(
     authorize: AuthJWT, *, response: Response, token: str, refresh_token: str
 ) -> Response:
+    """
+    Sets access and refresh tokens as cookies in the response.
+
+    Args:
+        authorize (AuthJWT): The AuthJWT instance for setting cookies.
+        response (Response): The Starlette response object.
+        token (str): The access token to set.
+        refresh_token (str): The refresh token to set.
+
+    Returns:
+        Response: The modified Starlette response object with tokens set as cookies.
+    """
     authorize.set_access_cookies(
         token,
         response=response,

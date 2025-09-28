@@ -30,6 +30,18 @@ async def signin(
     authorize: AuthJWT = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
+    """
+    Handle user sign-in.
+
+    Args:
+        body (SignInRequestSchema): The sign-in request body containing email and password.
+        authorize (AuthJWT): Dependency for JWT authorization.
+        session (AsyncSession): Dependency for asynchronous database session.
+
+    Returns:
+        Response: A Starlette response with JWT cookies set on successful sign-in,
+                  or a JSONResponse with an error if sign-in fails.
+    """
     try:
         user = await get_user_by_credentials(
             session, email=str(body.email), password=body.password
@@ -55,6 +67,16 @@ async def signup(
     body: SignUpRequestSchema,
     session: AsyncSession = Depends(get_session),
 ):
+    """
+    Handle user sign-up.
+
+    Args:
+        body (SignUpRequestSchema): The sign-up request body containing email and password.
+        session (AsyncSession): Dependency for asynchronous database session.
+
+    Returns:
+        SignUpResponseSchema: The response containing the email of the newly created user.
+    """
     return await create_user(
         session, email=str(body.email), password=body.password
     )
@@ -65,6 +87,17 @@ async def refresh_access_token(
     session: AsyncSession = Depends(get_session),
     authorize: AuthJWT = Depends(),
 ):
+    """
+    Refresh the access token using a valid refresh token.
+
+    Args:
+        session (AsyncSession): Dependency for asynchronous database session.
+        authorize (AuthJWT): Dependency for JWT authorization.
+
+    Returns:
+        Response: A Starlette response with new JWT cookies set,
+                  or a JSONResponse with an error if the user is not found.
+    """
     authorize.jwt_refresh_token_required()
     current_user_email = authorize.get_jwt_subject()
 

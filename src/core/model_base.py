@@ -13,8 +13,18 @@ metadata = MetaData(naming_convention=convention)
 
 
 class Base(DeclarativeBase):
+    """
+    Base class for SQLAlchemy declarative models, providing naming conventions and __tablename__.
+    """
+
     metadata = metadata
 
     @declared_attr.directive
     def __tablename__(cls) -> str:
+        """
+        Generate the table name for the model based on its class name.
+
+        Returns:
+            str: The lowercase class name as the table name.
+        """
         return cls.__name__.lower()

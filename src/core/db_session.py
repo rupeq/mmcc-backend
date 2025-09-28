@@ -15,5 +15,11 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, Any]:
+    """
+    Provide an asynchronous database session.
+
+    Yields:
+        AsyncSession: An asynchronous SQLAlchemy session.
+    """
     async with SessionLocal() as session:
         yield session
