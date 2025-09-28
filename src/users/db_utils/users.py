@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import verify_password, hash_password
@@ -109,3 +109,19 @@ async def create_user(
         await session.commit()
         logger.debug("Created user by email (email: %s).", email)
         return user
+
+
+async def delete_user(session: AsyncSession, *, email: str) -> None:
+    """
+    Delete a user by setting their 'is_active' status to False.
+
+    Args:
+        session (AsyncSession): The asynchronous database session.
+        email (str): The email address of the user to delete.
+    """
+    logger.debug("Trying to delete user (email: %s)", email)
+    await session.execute(
+        update(Users).where(Users.email == email).values(is_active=False)
+    )
+    await session.commit()
+    logger.debug("Deleted user by email (email: %s).", email)

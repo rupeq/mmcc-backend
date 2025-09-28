@@ -48,7 +48,8 @@ async def signin(
         )
     except (UserNotFound, PasswordDoesNotMatch):
         response = JSONResponse(
-            status_code=404, content={"detail": "User not found"}
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": "User not found"},
         )
         authorize.unset_jwt_cookies(response=response)
         return response
@@ -62,7 +63,11 @@ async def signin(
     )
 
 
-@router.post("/signup", response_model=SignUpResponseSchema)
+@router.post(
+    "/signup",
+    response_model=SignUpResponseSchema,
+    status_code=status.HTTP_201_CREATED,
+)
 async def signup(
     body: SignUpRequestSchema,
     session: AsyncSession = Depends(get_session),
@@ -105,7 +110,8 @@ async def refresh_access_token(
         await get_user_by_email(session, email=current_user_email)
     except UserNotFound:
         response = JSONResponse(
-            status_code=404, content={"detail": "User not found"}
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": "User not found"},
         )
         authorize.unset_jwt_cookies(response=response)
         return response

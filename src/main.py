@@ -5,6 +5,7 @@ from another_fastapi_jwt_auth.exceptions import AuthJWTException
 from src.config import get_settings
 from src.core.exception_handlers import authjwt_exception_handler
 from src.authorization.routes.v1.routes import router as authorization_router
+from src.users.routes.v1.routes import router as users_router
 from src.core.logging import configure_logging
 
 configure_logging()
@@ -26,3 +27,4 @@ app.exception_handler(AuthJWTException)(authjwt_exception_handler)
 app.include_router(
     authorization_router, prefix=get_settings().service.api_prefix
 )
+app.include_router(users_router, prefix=get_settings().service.api_prefix)
