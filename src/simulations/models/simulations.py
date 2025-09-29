@@ -13,6 +13,21 @@ if TYPE_CHECKING:
 
 
 class SimulationConfiguration(Base):
+    """Represent a simulation configuration.
+
+    Attributes:
+        id: The unique identifier of the simulation configuration.
+        name: The name of the simulation configuration.
+        description: The description of the simulation configuration.
+        simulation_parameters: The parameters for the simulation.
+        user_id: The ID of the user who owns this configuration.
+        user: The user who owns this configuration.
+        reports: The list of simulation reports associated with this configuration.
+        created_at: The timestamp when the configuration was created.
+        updated_at: The timestamp when the configuration was last updated.
+        is_active: Indicates if the configuration is active.
+    """
+
     __tablename__ = "simulation_configurations"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -45,6 +60,20 @@ class SimulationConfiguration(Base):
 
 
 class SimulationReport(Base):
+    """Represent a simulation report.
+
+    Attributes:
+        id: The unique identifier of the simulation report.
+        status: The current status of the report (pending, completed, failed).
+        results: The results of the simulation.
+        error_message: The error message if the simulation failed.
+        configuration_id: The ID of the simulation configuration this report belongs to.
+        configuration: The simulation configuration this report belongs to.
+        created_at: The timestamp when the report was created.
+        completed_at: The timestamp when the report was completed.
+        is_active: Indicates if the report is active.
+    """
+
     __tablename__ = "simulation_reports"
 
     id: Mapped[uuid.UUID] = mapped_column(
