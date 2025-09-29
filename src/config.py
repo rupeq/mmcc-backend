@@ -3,7 +3,7 @@ from functools import lru_cache
 from typing import Literal, Any
 
 from another_fastapi_jwt_auth import AuthJWT
-from pydantic import Field, AnyHttpUrl, BaseModel
+from pydantic import Field, AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.authorization.config import (
