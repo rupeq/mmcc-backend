@@ -6,7 +6,7 @@ from argon2.low_level import Type
 from src.config import get_settings
 
 
-@lru_cache
+@lru_cache()
 def get_password_hasher() -> PasswordHasher:
     """Get a cached instance of the PasswordHasher."""
     settings = get_settings().argon_settings

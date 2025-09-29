@@ -92,7 +92,7 @@ class Settings(BaseSettings):
         AuthJWT.load_config(lambda: self.authorization)  # type:ignore
 
 
-@lru_cache
+@lru_cache()
 def get_settings() -> Settings:
     """
     Get the cached Settings instance.

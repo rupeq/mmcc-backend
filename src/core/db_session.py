@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 from src.config import get_settings
 
 
-@lru_cache
+@lru_cache()
 def get_engine() -> AsyncEngine:
     """Get a cached instance of the SQLAlchemy async engine."""
     return create_async_engine(
@@ -22,7 +22,7 @@ def get_engine() -> AsyncEngine:
     )
 
 
-@lru_cache
+@lru_cache()
 def get_session_local() -> async_sessionmaker[AsyncSession]:
     """Get a cached instance of the async session maker."""
     return async_sessionmaker(get_engine(), expire_on_commit=False)
