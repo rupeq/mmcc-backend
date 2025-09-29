@@ -1,5 +1,3 @@
-import pytest
-
 import src.config
 from src.config import (
     ArgonSettings,
@@ -10,17 +8,13 @@ from src.config import (
 )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def mock_settings():
+def pytest_configure(config):
     """
-    Override the get_settings function for the entire test session.
+    Allos plugins and conftest files to perform initial configuration.
 
-    This fixture manually patches the settings to prevent ValidationErrors
-    during pytest collection in CI/CD environments. It uses a session scope
-    to ensure the patch is active before any tests are collected and runs.
+    This hook is called for every plugin and initial conftest file
+    after command line options have been parsed but before test collection.
     """
-    original_get_settings = src.config.get_settings
-
     def get_mock_settings():
         """This function will replace the real get_settings()."""
         return Settings(
@@ -34,8 +28,4 @@ def mock_settings():
             argon_settings=ArgonSettings(),
         )
 
-    try:
-        src.config.get_settings = get_mock_settings
-        yield
-    finally:
-        src.config.get_settings = original_get_settings
+    src.config.get_settings = get_mock_settings
