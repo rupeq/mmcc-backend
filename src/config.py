@@ -1,9 +1,10 @@
 import os
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Any
 
 from another_fastapi_jwt_auth import AuthJWT
-from pydantic import Field, AnyHttpUrl
+from pydantic import Field, AnyHttpUrl, BaseModel
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.authorization.config import (
     Settings as AuthorizationSettings,
@@ -15,8 +16,6 @@ from src.core.config import (
     get_argon_settings,
     ArgonSettings,
 )
-
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ServiceSettings(BaseSettings):
@@ -78,7 +77,6 @@ class Settings(BaseSettings):
         authorization (AuthorizationSettings): Authorization-specific settings.
         logger_settings (LoggerSettings): Logger-specific settings.
         argon_settings (ArgonSettings): Argon2 hashing-specific settings.
-        _auth_jwt (AuthJWT): An instance of AuthJWT loaded with authorization configuration.
     """
 
     service: ServiceSettings = Field(default_factory=get_service_settings)
@@ -88,7 +86,10 @@ class Settings(BaseSettings):
     logger_settings: LoggerSettings = Field(default_factory=get_logger_settings)
     argon_settings: ArgonSettings = Field(default_factory=get_argon_settings)
 
-    _auth_jwt = AuthJWT.load_config(get_authorization_config)  # type:ignore
+    def model_post_init(self, context: Any, /) -> None:
+        """Load JWT config after the model is initialized."""
+        super().model_post_init(context)
+        AuthJWT.load_config(get_authorization_config)  # type:ignore
 
 
 @lru_cache
