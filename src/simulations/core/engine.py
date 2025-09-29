@@ -15,7 +15,11 @@ from src.simulations.core.schemas import (
     SimulationResponse,
     ConfidenceInterval,
     AggregatedMetrics,
+    SweepResultItem,
+    SweepResponse,
+    SweepRequest,
 )
+from src.simulations.core.utils import set_nested_attr
 
 
 class Simulator:
@@ -56,6 +60,7 @@ class Simulator:
             "total_busy_time": 0.0,
         }
         self.gantt_chart_data: list[GanttChartItem] = []
+        self.service_times_log: list[float] = []
 
     def _get_arrival_generator(self) -> Callable[[], float]:
         """Create a generator for inter-arrival times.
@@ -141,6 +146,7 @@ class Simulator:
 
             self.stats["processed_requests"] += 1
             service_time = self.service_generator()
+            self.service_times_log.append(service_time)
             departure_time = self.clock + service_time
 
             self.stats["total_busy_time"] += service_time
@@ -190,7 +196,9 @@ class Simulator:
         )
 
         return SimulationResult(
-            metrics=metrics, gantt_chart=self.gantt_chart_data
+            metrics=metrics,
+            gantt_chart=self.gantt_chart_data,
+            raw_service_times=self.service_times_log,
         )
 
 
@@ -292,3 +300,37 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
         aggregated_metrics=aggregated_metrics,
         replications=replication_results,
     )
+
+
+def run_sweep(params: SweepRequest) -> SweepResponse:
+    """Run a series of simulations (a parameter sweep) by varying a single parameter.
+
+    Iterates through a predefined list of values for a specified parameter,
+    running a full simulation (including replications) for each value.
+    The aggregated results for each parameter value are then collected.
+    Supports nested parameters using dot notation (e.g., 'arrival_process.rate').
+
+    Args:
+        params (SweepRequest): A `SweepRequest` object containing the base
+            simulation parameters and the definition of the parameter to sweep.
+
+    Returns:
+        SweepResponse: A `SweepResponse` object containing a list of
+            `SweepResultItem`s, where each item holds the parameter value
+            and the corresponding `SimulationResponse`.
+    """
+    sweep_results = []
+    param_name = params.sweep_parameter.name
+
+    for value in params.sweep_parameter.values:
+        request_for_value = params.base_request.model_copy(deep=True)
+
+        set_nested_attr(request_for_value, param_name, value)
+
+        simulation_response = run_replications(request_for_value)
+
+        sweep_results.append(
+            SweepResultItem(parameter_value=value, result=simulation_response)
+        )
+
+    return SweepResponse(results=sweep_results)

@@ -1,8 +1,12 @@
-from src.simulations.core.engine import Simulator, run_replications
+from src.simulations.core.engine import Simulator, run_replications, run_sweep
 from src.simulations.core.schemas import (
     SimulationRequest,
     ExponentialParams,
     ArrivalScheduleItem,
+    SweepRequest,
+    SweepParameter,
+    SimulationResponse,
+    AggregatedMetrics,
 )
 
 
@@ -142,3 +146,49 @@ def test_non_stationary_flow_deterministic(mocker):
     # t=5 to t=8 (rate=4): arrivals at t=5, 5.25, 5.5, ... 7.75 (12 arrivals)
     # Total arrivals = 5 + 12 = 17
     assert result.metrics.total_requests == 17
+
+
+def test_run_sweep_nested_parameter(mocker):
+    """Test the sweep functionality with a nested parameter."""
+    dummy_response = SimulationResponse(
+        aggregated_metrics=AggregatedMetrics(
+            num_replications=1,
+            total_requests=10,
+            processed_requests=8,
+            rejected_requests=2,
+            rejection_probability=0.2,
+            avg_channel_utilization=0.8,
+            throughput=1.0,
+        ),
+        replications=[],
+    )
+
+    mock_runner = mocker.patch(
+        "src.simulations.core.engine.run_replications",
+        return_value=dummy_response,
+    )
+
+    base_request = create_base_request(
+        arrival_process=ExponentialParams(rate=1.0)
+    )
+
+    sweep_values = [0.5, 1.5, 2.5]
+    sweep_request = SweepRequest(
+        base_request=base_request,
+        sweep_parameter=SweepParameter(  # type:ignore
+            name="arrival_process.rate", values=sweep_values
+        ),
+    )  # type:ignore
+
+    sweep_response = run_sweep(sweep_request)
+
+    assert mock_runner.call_count == len(sweep_values)
+    assert len(sweep_response.results) == len(sweep_values)
+
+    for i, call in enumerate(mock_runner.call_args_list):
+        called_request = call[0][0]
+        expected_rate = sweep_values[i]
+
+        assert isinstance(called_request, SimulationRequest)
+        assert called_request.arrival_process.rate == expected_rate
+        assert called_request.num_channels == base_request.num_channels

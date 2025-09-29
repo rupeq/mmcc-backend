@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Literal
 
 from pydantic import Field, BaseModel, ConfigDict
 
@@ -137,6 +137,7 @@ class SimulationResult(BaseModel):
 
     metrics: SimulationMetrics
     gantt_chart: list[GanttChartItem]
+    raw_service_times: list[float] | None = None
 
 
 class SimulationResponse(BaseModel):
@@ -144,3 +145,42 @@ class SimulationResponse(BaseModel):
 
     aggregated_metrics: AggregatedMetrics
     replications: list[SimulationResult]
+
+
+class SweepParameter(BaseModel):
+    """Define the parameter to be varied in a sweep experiment."""
+
+    name: str = Field(
+        ...,
+        description="Name of the parameter to sweep, using dot notation for nested fields.",
+        examples=["num_channels", "arrival_process.rate"],
+    )
+    values: list[Union[int, float]] = Field(
+        ...,
+        min_length=1,
+        description="A list of values to use for the specified parameter.",
+    )
+
+
+class SweepRequest(BaseModel):
+    """Represent a request to perform a parameter sweep simulation."""
+
+    base_request: SimulationRequest
+    sweep_parameter: SweepParameter = Field(..., alias="sweepParameter")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
+class SweepResultItem(BaseModel):
+    """Represent the simulation results for a single parameter value in a sweep."""
+
+    parameter_value: Union[int, float, str]
+    result: SimulationResponse
+
+
+class SweepResponse(BaseModel):
+    """Represent the complete response for a parameter sweep experiment."""
+
+    results: list[SweepResultItem]
