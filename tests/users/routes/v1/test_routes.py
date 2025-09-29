@@ -9,7 +9,7 @@ from another_fastapi_jwt_auth import AuthJWT
 from src.main import app
 from src.core.db_session import get_session
 from src.users.db_utils.exceptions import UserNotFound
-from src.users.models.users import Users
+from src.users.models.users import User
 
 BASE_URL = "/api/v1/users"
 TEST_EMAIL = "test@example.com"
@@ -22,7 +22,7 @@ def client():
 
 @pytest.fixture
 def mock_user():
-    user = Users()
+    user = User()
     user.id = uuid.uuid4()
     user.email = TEST_EMAIL
     user.is_active = True
