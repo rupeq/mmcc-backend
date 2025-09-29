@@ -5,16 +5,16 @@ from another_fastapi_jwt_auth.exceptions import AuthJWTException
 from src.config import get_settings
 from src.core.exception_handlers import authjwt_exception_handler
 from src.authorization.routes.v1.routes import router as authorization_router
+from src.core.lifespan import lifespan
 from src.users.routes.v1.routes import router as users_router
-from src.core.logging import configure_logging
 
-configure_logging()
 app = FastAPI(
     debug=get_settings().service.debug,
     title=get_settings().service.app_name,
     docs_url="/docs" if get_settings().service.debug else None,
     redoc_url="/redoc" if get_settings().service.debug else None,
     openapi_url="/openapi" if get_settings().service.debug else None,
+    lifespan=lifespan,
 )
 
 

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache
+@lru_cache()
 def get_config() -> Settings:
     """
     Get the cached AuthorizationSettings instance.

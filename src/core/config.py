@@ -42,7 +42,7 @@ class ArgonSettings(BaseSettings):
     )
 
 
-@lru_cache
+@lru_cache()
 def get_logger_settings() -> LoggerSettings:
     """
     Get the cached LoggerSettings instance.
@@ -53,7 +53,7 @@ def get_logger_settings() -> LoggerSettings:
     return LoggerSettings()
 
 
-@lru_cache
+@lru_cache()
 def get_argon_settings() -> ArgonSettings:
     """
     Get the cached ArgonSettings instance.

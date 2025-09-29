@@ -44,6 +44,8 @@ def test_verify_password_handles_argon_exception(mock_get_password_hasher):
     """
     Test that any unexpected exception from the hashing library is handled.
     """
-    mock_get_password_hasher.return_value.verify.side_effect = VerifyMismatchError
+    mock_get_password_hasher.return_value.verify.side_effect = (
+        VerifyMismatchError
+    )
     result = verify_password("anypassword", password_hash="anyhash")
     assert result is False
