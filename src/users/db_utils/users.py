@@ -17,6 +17,35 @@ from src.users.models.users import User
 logger = logging.getLogger(__name__)
 
 
+async def get_user_by_id(session: AsyncSession, *, user_id: str) -> User:
+    """
+    Retrieve a user from the database by their ID.
+
+    Args:
+        session (AsyncSession): The asynchronous database session.
+        user_id (str): The ID of the user to retrieve.
+
+    Returns:
+        User: The user object if found and active.
+
+    Raises:
+        UserNotFound: If no active user with the given email is found.
+    """
+    logger.debug("Trying to get user by ID: %s", user_id)
+    maybe_user = (
+        await session.execute(
+            select(User).where(User.id == user_id, User.is_active == True)
+        )
+    ).scalar_one_or_none()
+
+    if maybe_user is None:
+        logger.debug("User not found (user_id: %s)", user_id)
+        raise UserNotFound()
+
+    logger.debug("Found user by ID: %s", user_id)
+    return maybe_user
+
+
 async def get_user_by_email(session: AsyncSession, *, email: str) -> User:
     """
     Retrieve a user from the database by their email address.
@@ -122,17 +151,17 @@ async def create_user(
     return user
 
 
-async def delete_user(session: AsyncSession, *, email: str) -> None:
+async def delete_user(session: AsyncSession, *, user_id: str) -> None:
     """
     Delete a user by setting their 'is_active' status to False.
 
     Args:
         session (AsyncSession): The asynchronous database session.
-        email (str): The email address of the user to delete.
+        user_id (str): The ID of the user to delete.
     """
-    logger.debug("Trying to delete user (email: %s)", email)
+    logger.debug("Trying to delete user (ID: %s)", user_id)
     await session.execute(
-        update(User).where(User.email == email).values(is_active=False)
+        update(User).where(User.id == user_id).values(is_active=False)
     )
     await session.commit()
-    logger.debug("Deleted user by email (email: %s).", email)
+    logger.debug("Deleted user by ID: %s.", user_id)

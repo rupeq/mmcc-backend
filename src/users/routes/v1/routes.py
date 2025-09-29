@@ -9,6 +9,7 @@ from src.users.db_utils.exceptions import UserNotFound
 from src.users.db_utils.users import (
     get_user_by_email,
     delete_user,
+    get_user_by_id,
 )
 from src.users.routes.v1.schemas import GetMeResponse
 
@@ -34,10 +35,10 @@ async def get_current_user(
             otherwise a JSONResponse with status 404 and an error message.
     """
     authorize.jwt_required()
-    current_user_email = authorize.get_jwt_subject()
+    user_id = authorize.get_jwt_subject()
 
     try:
-        user = await get_user_by_email(session, email=current_user_email)
+        user = await get_user_by_id(session, user_id=user_id)
     except UserNotFound:
         response = JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -67,8 +68,9 @@ async def delete_current_user(
         JSONResponse: A JSONResponse indicating the user has been deleted.
     """
     authorize.jwt_required()
-    current_user_email = authorize.get_jwt_subject()
-    await delete_user(session, email=current_user_email)
+    user_id = authorize.get_jwt_subject()
+
+    await delete_user(session, user_id=user_id)
     response = JSONResponse(content={"detail": "User deleted"})
     authorize.unset_jwt_cookies(response=response)
     return response
