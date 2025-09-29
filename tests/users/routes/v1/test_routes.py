@@ -13,6 +13,7 @@ from src.users.models.users import User
 
 BASE_URL = "/api/v1/users"
 TEST_EMAIL = "test@example.com"
+TEST_USER_ID = uuid.uuid4()
 
 
 @pytest.fixture
@@ -23,7 +24,7 @@ def client():
 @pytest.fixture
 def mock_user():
     user = User()
-    user.id = uuid.uuid4()
+    user.id = TEST_USER_ID
     user.email = TEST_EMAIL
     user.is_active = True
     user.created_at = datetime.datetime.now(datetime.timezone.utc)
@@ -34,7 +35,7 @@ def mock_user():
 @pytest.fixture
 def mock_auth_dependency():
     mock_authorize = MagicMock()
-    mock_authorize.get_jwt_subject.return_value = TEST_EMAIL
+    mock_authorize.get_jwt_subject.return_value = str(TEST_USER_ID)
     mock_authorize.jwt_required.return_value = None
     mock_authorize.unset_jwt_cookies.return_value = None
 
@@ -64,7 +65,7 @@ def test_get_current_user_success(
     Test the GET /me endpoint for a successful scenario where the user is found.
     """
     mock_get_user = mocker.patch(
-        "src.users.routes.v1.routes.get_user_by_email",
+        "src.users.routes.v1.routes.get_user_by_id",
         return_value=mock_user,
     )
 
@@ -72,7 +73,7 @@ def test_get_current_user_success(
 
     assert response.status_code == 200
     mock_auth_dependency.jwt_required.assert_called_once()
-    mock_get_user.assert_called_once_with(mocker.ANY, email=TEST_EMAIL)
+    mock_get_user.assert_called_once_with(mocker.ANY, user_id=str(TEST_USER_ID))
     data = response.json()
     assert data["email"] == mock_user.email
     assert data["id"] == str(mock_user.id)
@@ -84,7 +85,7 @@ def test_get_current_user_not_found(client, mocker, mock_auth_dependency):
     Test the GET /me endpoint for a scenario where the user does not exist in the db.
     """
     mocker.patch(
-        "src.users.routes.v1.routes.get_user_by_email",
+        "src.users.routes.v1.routes.get_user_by_id",
         side_effect=UserNotFound,
     )
 
@@ -104,5 +105,5 @@ def test_delete_current_user_success(client, mocker, mock_auth_dependency):
     response = client.delete(f"{BASE_URL}/me")
     assert response.status_code == 200
     assert response.json() == {"detail": "User deleted"}
-    mock_delete_user.assert_called_once_with(mocker.ANY, email=TEST_EMAIL)
+    mock_delete_user.assert_called_once_with(mocker.ANY, user_id=str(TEST_USER_ID))
     mock_auth_dependency.unset_jwt_cookies.assert_called_once()
