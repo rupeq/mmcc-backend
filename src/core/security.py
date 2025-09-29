@@ -1,15 +1,22 @@
+from functools import lru_cache
+
 from argon2 import PasswordHasher
 from argon2.low_level import Type
 
 from src.config import get_settings
 
-ph = PasswordHasher(
-    time_cost=get_settings().argon_settings.argon_time_cost,
-    memory_cost=get_settings().argon_settings.argon_memory_cost,
-    parallelism=get_settings().argon_settings.argon_parallelism,
-    hash_len=32,
-    type=Type.ID,
-)
+
+@lru_cache()
+def get_password_hasher() -> PasswordHasher:
+    """Get a cached instance of the PasswordHasher."""
+    settings = get_settings().argon_settings
+    return PasswordHasher(
+        time_cost=settings.argon_time_cost,
+        memory_cost=settings.argon_memory_cost,
+        parallelism=settings.argon_parallelism,
+        hash_len=32,
+        type=Type.ID,
+    )
 
 
 def hash_password(password: str) -> str:
@@ -22,7 +29,7 @@ def hash_password(password: str) -> str:
     Returns:
         str: The Argon2 hashed password.
     """
-    return ph.hash(password)
+    return get_password_hasher().hash(password)
 
 
 def verify_password(password: str, *, password_hash: str) -> bool:
@@ -37,6 +44,6 @@ def verify_password(password: str, *, password_hash: str) -> bool:
         bool: True if the password matches the hash, False otherwise.
     """
     try:
-        return ph.verify(password_hash, password)
+        return get_password_hasher().verify(password_hash, password)
     except Exception:
         return False

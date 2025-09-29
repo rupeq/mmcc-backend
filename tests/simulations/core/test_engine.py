@@ -8,7 +8,6 @@ from src.simulations.core.schemas import (
 
 def create_base_request(**kwargs):
     """Create a default SimulationRequest that can be overridden."""
-
     defaults = {
         "num_channels": 1,
         "simulation_time": 10,
@@ -22,7 +21,6 @@ def create_base_request(**kwargs):
 
 def test_simulator_deterministic_run(mocker):
     """Test a simple, predictable scenario with mocked random generators."""
-
     arrival_mock = mocker.patch(
         "src.simulations.core.engine.get_generator", return_value=lambda: 1.5
     )
@@ -50,7 +48,6 @@ def test_simulator_deterministic_run(mocker):
 
 def test_rejection_logic(mocker):
     """Test that a request is rejected if all channels are busy."""
-
     arrival_mock = mocker.patch(
         "src.simulations.core.engine.get_generator", return_value=lambda: 1.0
     )
@@ -77,7 +74,6 @@ def test_rejection_logic(mocker):
 
 def test_multi_channel_logic(mocker):
     """Test that a second channel prevents rejection."""
-
     arrival_mock = mocker.patch(
         "src.simulations.core.engine.get_generator",
         return_value=lambda: 1.0,
@@ -104,7 +100,6 @@ def test_multi_channel_logic(mocker):
 
 def test_random_seed_consistency():
     """Test that the same seed produces the same results."""
-
     params = create_base_request(random_seed=42, num_replications=5)
 
     response1 = run_replications(params)
@@ -115,7 +110,6 @@ def test_random_seed_consistency():
 
 def test_run_replications_aggregation():
     """Test that replications run and produce aggregated metrics with CIs."""
-
     params = create_base_request(num_replications=10, random_seed=123)
     response = run_replications(params)
 
@@ -132,7 +126,6 @@ def test_run_replications_aggregation():
 
 def test_non_stationary_flow_deterministic(mocker):
     """Test that the arrival rate changes according to the schedule."""
-
     mocker.patch("numpy.random.exponential", side_effect=lambda scale: scale)
 
     params = create_base_request(
