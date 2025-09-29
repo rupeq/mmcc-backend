@@ -39,11 +39,11 @@ def test_verify_password_failure_invalid_hash():
     assert verify_password(TEST_PASSWORD, password_hash="invalidhash") is False
 
 
-@patch("src.core.security.ph")
-def test_verify_password_handles_argon_exception(mock_ph):
+@patch("src.core.security.get_password_hasher")
+def test_verify_password_handles_argon_exception(mock_get_password_hasher):
     """
     Test that any unexpected exception from the hashing library is handled.
     """
-    mock_ph.verify.side_effect = VerifyMismatchError
+    mock_get_password_hasher.return_value.verify.side_effect = VerifyMismatchError
     result = verify_password("anypassword", password_hash="anyhash")
     assert result is False
