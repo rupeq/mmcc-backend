@@ -11,8 +11,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from src.config import get_settings
 from src.users.models.users import *
+from src.simulations.models.simulations import *
 
-load_dotenv(os.path.join("..", "..", ".service.env"))
+load_dotenv(os.path.join("..", "src", ".service.env"))
 
 config = context.config
 section = config.config_ini_section
