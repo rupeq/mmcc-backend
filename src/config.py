@@ -1,9 +1,9 @@
 import os
 from functools import lru_cache
-from typing import Literal, Any
+from typing import Literal
 
 from another_fastapi_jwt_auth import AuthJWT
-from pydantic import AnyHttpUrl
+from pydantic import Field, AnyHttpUrl
 
 from src.authorization.config import (
     Settings as AuthorizationSettings,
@@ -81,10 +81,12 @@ class Settings(BaseSettings):
         _auth_jwt (AuthJWT): An instance of AuthJWT loaded with authorization configuration.
     """
 
-    service: ServiceSettings = get_service_settings()
-    authorization: AuthorizationSettings = get_authorization_config()
-    logger_settings: LoggerSettings = get_logger_settings()
-    argon_settings: ArgonSettings = get_argon_settings()
+    service: ServiceSettings = Field(default_factory=get_service_settings)
+    authorization: AuthorizationSettings = Field(
+        default_factory=get_authorization_config
+    )
+    logger_settings: LoggerSettings = Field(default_factory=get_logger_settings)
+    argon_settings: ArgonSettings = Field(default_factory=get_argon_settings)
 
     _auth_jwt = AuthJWT.load_config(get_authorization_config)  # type:ignore
 
