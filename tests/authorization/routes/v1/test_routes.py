@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -16,6 +18,7 @@ from src.users.models.users import User
 
 BASE_URL = "/api/v1/authorization"
 TEST_EMAIL = "test@example.com"
+TEST_ID = uuid.uuid4()
 TEST_PASSWORD = "password123"
 ACCESS_TOKEN = "fake_access_token"
 REFRESH_TOKEN = "fake_refresh_token"
@@ -30,13 +33,14 @@ def client():
 def mock_user():
     user = User()
     user.email = TEST_EMAIL
+    user.id = TEST_ID
     return user
 
 
 @pytest.fixture
 def mock_auth_dependency():
     mock_authorize = MagicMock()
-    mock_authorize.get_jwt_subject.return_value = TEST_EMAIL
+    mock_authorize.get_jwt_subject.return_value = str(TEST_ID)
     mock_authorize.jwt_required.return_value = None
     mock_authorize.jwt_refresh_token_required.return_value = None
     mock_authorize.unset_jwt_cookies.return_value = None
@@ -75,7 +79,7 @@ def test_signin_success(client, mocker, mock_user, mock_auth_dependency):
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_create_tokens.assert_called_once_with(
-        mock_auth_dependency, email=mock_user.email
+        mock_auth_dependency, user_id=str(mock_user.id)
     )
 
 
@@ -152,7 +156,7 @@ def test_refresh_access_token_success(
 ):
     """Test successful refresh of an access token."""
     mocker.patch(
-        "src.authorization.routes.v1.routes.get_user_by_email",
+        "src.authorization.routes.v1.routes.get_user_by_id",
         return_value=mock_user,
     )
     mock_create_tokens = mocker.patch(
@@ -165,7 +169,7 @@ def test_refresh_access_token_success(
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_auth_dependency.jwt_refresh_token_required.assert_called_once()
     mock_create_tokens.assert_called_once_with(
-        mock_auth_dependency, email=TEST_EMAIL
+        mock_auth_dependency, user_id=str(TEST_ID)
     )
 
 
@@ -174,7 +178,7 @@ def test_refresh_access_token_user_not_found(
 ):
     """Test token refresh failure when the user no longer exists."""
     mocker.patch(
-        "src.authorization.routes.v1.routes.get_user_by_email",
+        "src.authorization.routes.v1.routes.get_user_by_id",
         side_effect=UserNotFound,
     )
 

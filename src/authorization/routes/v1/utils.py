@@ -6,27 +6,27 @@ from starlette.responses import Response
 from src.config import get_settings
 
 
-def create_tokens(authorize: AuthJWT, *, email: str) -> tuple[str, str]:
+def create_tokens(authorize: AuthJWT, *, user_id: str) -> tuple[str, str]:
     """
     Create access and refresh tokens for a given user email.
 
     Args:
         authorize (AuthJWT): The AuthJWT instance for token creation.
-        email (str): The email of the user.
+        user_id (str): The ID of the user.
 
     Returns:
         tuple[str, str]: A tuple containing the access token and the refresh token.
     """
     return (
         authorize.create_access_token(
-            subject=email,
+            subject=user_id,
             expires_time=timedelta(
                 minutes=get_settings().authorization.access_token_max_age_in_minutes
             ),
             fresh=True,
         ),
         authorize.create_refresh_token(
-            subject=email,
+            subject=user_id,
             expires_time=timedelta(
                 minutes=get_settings().authorization.refresh_token_max_age_in_minutes
             ),

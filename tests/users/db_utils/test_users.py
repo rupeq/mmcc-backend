@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,12 +21,14 @@ from src.users.models.users import User
 
 TEST_EMAIL = "test@example.com"
 TEST_PASSWORD = "password123"
+TEST_USER_ID = uuid.uuid4()
 HASHED_PASSWORD = "hashed_password"
 
 
 def create_mock_user():
     """Helper function to create a mock user object."""
     user = User()
+    user.id = TEST_USER_ID
     user.email = TEST_EMAIL
     user.password_hash = HASHED_PASSWORD
     user.is_active = True
@@ -173,7 +177,7 @@ async def test_create_user_inactive_user_exists(
 async def test_delete_user():
     """Test that a user is marked as inactive."""
     mock_session = AsyncMock()
-    await delete_user(mock_session, email=TEST_EMAIL)
+    await delete_user(mock_session, user_id=str(TEST_USER_ID))
 
     mock_session.execute.assert_called_once()
     mock_session.commit.assert_called_once()

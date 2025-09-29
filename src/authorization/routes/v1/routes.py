@@ -23,7 +23,7 @@ from src.users.db_utils.exceptions import (
 from src.users.db_utils.users import (
     get_user_by_credentials,
     create_user,
-    get_user_by_email,
+    get_user_by_id,
 )
 
 router = APIRouter(tags=["v1", "authorization"], prefix="/v1/authorization")
@@ -59,7 +59,7 @@ async def signin(
         authorize.unset_jwt_cookies(response=response)
         return response
 
-    token, refresh_token = create_tokens(authorize, email=user.email)
+    token, refresh_token = create_tokens(authorize, user_id=str(user.id))
     return get_response_with_tokens(
         authorize,
         response=Response(status_code=status.HTTP_204_NO_CONTENT),
@@ -122,10 +122,10 @@ async def refresh_access_token(
                   or a JSONResponse with an error if the user is not found.
     """
     authorize.jwt_refresh_token_required()
-    current_user_email = authorize.get_jwt_subject()
+    user_id = authorize.get_jwt_subject()
 
     try:
-        await get_user_by_email(session, email=current_user_email)
+        await get_user_by_id(session, user_id=user_id)
     except UserNotFound:
         response = JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -134,7 +134,7 @@ async def refresh_access_token(
         authorize.unset_jwt_cookies(response=response)
         return response
 
-    token, refresh_token = create_tokens(authorize, email=current_user_email)
+    token, refresh_token = create_tokens(authorize, user_id=user_id)
     return get_response_with_tokens(
         authorize,
         response=Response(status_code=status.HTTP_204_NO_CONTENT),
