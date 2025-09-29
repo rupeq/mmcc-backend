@@ -24,7 +24,6 @@ from src.simulations.core.schemas import (
 )
 def test_get_generator_returns_callable(params):
     """Verify that get_generator returns a callable function for supported types."""
-
     generator = get_generator(params)
     assert isinstance(generator, Callable)
 
@@ -41,7 +40,6 @@ def test_get_generator_returns_callable(params):
 )
 def test_generator_returns_positive_float(params):
     """Verify that a generated value is a non-negative float."""
-
     generator = get_generator(params)
     value = generator()
     assert isinstance(value, float)
