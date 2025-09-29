@@ -12,7 +12,7 @@ from src.users.db_utils.exceptions import (
     UserAlreadyExists,
     UserIsNotActive,
 )
-from src.users.models.users import Users
+from src.users.models.users import User
 
 BASE_URL = "/api/v1/authorization"
 TEST_EMAIL = "test@example.com"
@@ -28,7 +28,7 @@ def client():
 
 @pytest.fixture
 def mock_user():
-    user = Users()
+    user = User()
     user.email = TEST_EMAIL
     return user
 

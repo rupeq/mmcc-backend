@@ -11,13 +11,13 @@ from src.users.db_utils.exceptions import (
     UserAlreadyExists,
     UserIsNotActive,
 )
-from src.users.models.users import Users
+from src.users.models.users import User
 
 
 logger = logging.getLogger(__name__)
 
 
-async def get_user_by_email(session: AsyncSession, *, email: str) -> Users:
+async def get_user_by_email(session: AsyncSession, *, email: str) -> User:
     """
     Retrieve a user from the database by their email address.
 
@@ -26,7 +26,7 @@ async def get_user_by_email(session: AsyncSession, *, email: str) -> Users:
         email (str): The email address of the user to retrieve.
 
     Returns:
-        Users: The user object if found and active.
+        User: The user object if found and active.
 
     Raises:
         UserNotFound: If no active user with the given email is found.
@@ -34,7 +34,7 @@ async def get_user_by_email(session: AsyncSession, *, email: str) -> Users:
     logger.debug("Trying to get user by email: %s", email)
     maybe_user = (
         await session.execute(
-            select(Users).where(Users.email == email, Users.is_active == True)
+            select(User).where(User.email == email, User.is_active == True)
         )
     ).scalar_one_or_none()
 
@@ -48,7 +48,7 @@ async def get_user_by_email(session: AsyncSession, *, email: str) -> Users:
 
 async def get_user_by_credentials(
     session: AsyncSession, *, email: str, password: str
-) -> Users:
+) -> User:
     """
     Retrieve and verify a user based on their email and password.
 
@@ -58,7 +58,7 @@ async def get_user_by_credentials(
         password (str): The plaintext password to verify.
 
     Returns:
-        Users: The user object if credentials are valid.
+        User: The user object if credentials are valid.
 
     Raises:
         UserNotFound: If no active user with the given email is found.
@@ -80,7 +80,7 @@ async def get_user_by_credentials(
 
 async def create_user(
     session: AsyncSession, *, email: str, password: str
-) -> Users:
+) -> User:
     """
     Create a new user in the database.
 
@@ -90,7 +90,7 @@ async def create_user(
         password (str): The plaintext password for the new user.
 
     Returns:
-        Users: The newly created user object.
+        User: The newly created user object.
 
     Raises:
         UserAlreadyExists: If a user with the given email already exists.
@@ -105,7 +105,7 @@ async def create_user(
     except UserNotFound:
         pass
 
-    user = Users(
+    user = User(
         email=email,
         password_hash=hash_password(password),
         is_active=True,
@@ -132,7 +132,7 @@ async def delete_user(session: AsyncSession, *, email: str) -> None:
     """
     logger.debug("Trying to delete user (email: %s)", email)
     await session.execute(
-        update(Users).where(Users.email == email).values(is_active=False)
+        update(User).where(User.email == email).values(is_active=False)
     )
     await session.commit()
     logger.debug("Deleted user by email (email: %s).", email)

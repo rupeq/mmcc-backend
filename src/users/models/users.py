@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.core.model_base import Base
 
 
-class Users(Base):
+class User(Base):
     """
     SQLAlchemy model for the 'users' table.
 
@@ -18,6 +18,7 @@ class Users(Base):
         created_at (Mapped["DateTime"]): Timestamp of when the user was created.
         updated_at (Mapped["DateTime"]): Timestamp of the last update to the user's record.
     """
+    __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(default=uuid.uuid4, primary_key=True)
 

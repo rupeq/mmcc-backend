@@ -15,7 +15,7 @@ from src.users.db_utils.exceptions import (
     UserAlreadyExists,
     UserIsNotActive,
 )
-from src.users.models.users import Users
+from src.users.models.users import User
 
 TEST_EMAIL = "test@example.com"
 TEST_PASSWORD = "password123"
@@ -24,7 +24,7 @@ HASHED_PASSWORD = "hashed_password"
 
 def create_mock_user():
     """Helper function to create a mock user object."""
-    user = Users()
+    user = User()
     user.email = TEST_EMAIL
     user.password_hash = HASHED_PASSWORD
     user.is_active = True
