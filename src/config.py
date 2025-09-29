@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     def model_post_init(self, context: Any, /) -> None:
         """Load JWT config after the model is initialized."""
         super().model_post_init(context)
-        AuthJWT.load_config(get_authorization_config)  # type:ignore
+        AuthJWT.load_config(lambda: self.authorization)  # type:ignore
 
 
 @lru_cache
