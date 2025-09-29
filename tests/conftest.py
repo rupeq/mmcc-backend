@@ -6,6 +6,8 @@ from src.config import (
     ServiceSettings,
     Settings,
 )
+from src.users.models import users  # noqa
+from src.simulations.models import simulations  # noqa
 
 
 def pytest_configure(config):
