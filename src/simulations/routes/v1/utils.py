@@ -1,9 +1,17 @@
+import math
+
+from sqlalchemy import Sequence, RowMapping, Row
+
 from src.simulations.models.enums import ReportStatus
 from src.simulations.models.simulations import SimulationConfiguration
 from src.simulations.routes.v1.exceptions import (
     BadFilterFormat,
     InvalidColumn,
     InvalidReportStatus,
+)
+from src.simulations.routes.v1.schemas import (
+    GetSimulationsResponse,
+    SimulationConfigurationInfo,
 )
 
 
@@ -36,14 +44,53 @@ def verify_report_status_value(filters: dict[str, str]) -> None:
     return None
 
 
-def validate_simulation_columns(columns: list[str] | None) -> None:
+def validate_simulation_columns(columns: list[str] | None) -> list[str] | None:
     if not columns:
         return None
 
     valid_columns = {c.name for c in SimulationConfiguration.__table__.columns}
 
-    for col in columns:
+    all_cols = []
+    for col_group in columns:
+        all_cols.extend(c.strip() for c in col_group.split(","))
+
+    if "id" not in all_cols:
+        all_cols.insert(0, "id")
+
+    for col in all_cols:
         if col not in valid_columns:
             raise InvalidColumn()
 
-    return None
+    return all_cols
+
+
+def get_simulations_response(
+    configs: Sequence[Row | RowMapping],
+    total_items: int,
+    *,
+    limit: int | None,
+    page: int | None,
+    columns: list[str] | None = None,
+) -> GetSimulationsResponse:
+    items_data = []
+    fields_to_extract = (
+        columns if columns else SimulationConfigurationInfo.model_fields.keys()
+    )
+    for config in configs:
+        items_data.append(
+            {
+                field: getattr(config, field)
+                for field in fields_to_extract
+                if hasattr(config, field)
+            }
+        )
+
+    return GetSimulationsResponse(
+        items=items_data,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / limit)
+        if limit is not None
+        else None,
+        page=page,
+        limit=limit,
+    )

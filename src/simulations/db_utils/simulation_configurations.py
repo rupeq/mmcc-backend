@@ -4,6 +4,7 @@ from sqlalchemy import select, func, Row, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
+from src.simulations.db_utils.exceptions import IdColumnRequiredException
 from src.simulations.models.enums import ReportStatus
 from src.simulations.models.simulations import (
     SimulationConfiguration,
@@ -50,7 +51,7 @@ async def get_simulation_configurations(
 
     if columns:
         if "id" not in columns:
-            columns.insert(0, "id")
+            raise IdColumnRequiredException()
 
         valid_load_columns = [
             getattr(SimulationConfiguration, col)

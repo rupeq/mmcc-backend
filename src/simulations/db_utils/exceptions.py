@@ -1,0 +1,2 @@
+class IdColumnRequiredException(Exception):
+    pass

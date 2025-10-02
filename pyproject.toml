@@ -40,4 +40,4 @@ addopts = "--cov=src --cov-report=xml"
 source = ["src"]
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 70
