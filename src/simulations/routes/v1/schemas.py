@@ -1,7 +1,9 @@
 import datetime
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from src.simulations.core.schemas import SimulationRequest
 
 
 class SimulationConfigurationInfo(BaseModel):
@@ -42,3 +44,45 @@ class GetSimulationsResponse(BaseModel):
     total_pages: int | None = None
     page: int | None = None
     limit: int | None = None
+
+
+class CreateSimulationRequest(BaseModel):
+    """Represent the request body for creating a new simulation.
+
+    Attributes:
+        name: A unique and descriptive name for the simulation configuration.
+              Must be between 1 and 255 characters long.
+        description: An optional detailed description of the
+                     simulation's purpose or characteristics.
+        simulation_parameters: The detailed parameters
+                               required by the simulation
+                               engine. This field is aliased
+                               as "simulationParameters"
+                               for API consumption.
+    """
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = None
+    simulation_parameters: SimulationRequest = Field(
+        ..., alias="simulationParameters"
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
+class CreateSimulationResponse(BaseModel):
+    """Represent the response body after successfully creating a simulation.
+
+    Attributes:
+        simulation_configuration_id: The unique identifier for the
+                                     newly created simulation
+                                     configuration.
+        simulation_report_id: The unique identifier for the
+                              initial simulation report generated
+                              for this configuration.
+    """
+
+    simulation_configuration_id: uuid.UUID
+    simulation_report_id: uuid.UUID

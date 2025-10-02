@@ -14,9 +14,12 @@ from src.simulations.routes.v1.exceptions import (
 )
 from src.simulations.routes.v1.schemas import (
     GetSimulationsResponse,
+    CreateSimulationResponse,
+    CreateSimulationRequest,
 )
 from src.simulations.db_utils.simulation_configurations import (
     get_simulation_configurations,
+    create_simulation_configuration,
 )
 from src.simulations.routes.v1.utils import (
     parse_search_query,
@@ -66,7 +69,6 @@ async def get_simulations(
                        or an internal server error occurs.
     """
     authorize.jwt_required()
-    user_id = authorize.get_jwt_subject()
 
     try:
         filters = parse_search_query(filters)
@@ -93,7 +95,7 @@ async def get_simulations(
     try:
         configs, total_items = await get_simulation_configurations(
             session,
-            user_id=user_id,
+            user_id=authorize.get_jwt_subject(),
             columns=columns,
             filters=filters,
             page=page,
@@ -109,4 +111,46 @@ async def get_simulations(
 
     return get_simulations_response(
         configs, total_items, page=page, limit=limit, columns=columns
+    )
+
+
+@router.post(
+    "",
+    response_model=CreateSimulationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_simulation(
+    request: CreateSimulationRequest,
+    authorize: AuthJWT = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    """Atomically create a SimulationConfiguration and its initial SimulationReport.
+
+    This function attempts to run a simulation and then persists both the
+    configuration and an associated report (even if the simulation failed)
+    within a single database transaction.
+
+    Args:
+        authorize: Dependency for JWT authentication.
+        session: The asynchronous database session.
+        request: Request object.
+
+    Returns:
+        A response containing a SimulationConfiguration.
+    """
+    authorize.jwt_required()
+
+    configuration, report = await create_simulation_configuration(
+        session,
+        user_id=authorize.get_jwt_subject(),
+        name=request.name,
+        description=request.description,
+        simulation_parameters=request.simulation_parameters.model_dump(
+            by_alias=True
+        ),
+    )
+
+    return CreateSimulationResponse(
+        simulation_configuration_id=configuration.id,
+        simulation_report_id=report.id,
     )

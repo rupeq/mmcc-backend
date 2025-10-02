@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Sequence
 
 from sqlalchemy import select, func, Row, RowMapping
@@ -5,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from src.simulations.db_utils.exceptions import IdColumnRequiredException
+from src.simulations.db_utils.simulation_reports import create_simulation_report
 from src.simulations.models.enums import ReportStatus
 from src.simulations.models.simulations import (
     SimulationConfiguration,
@@ -90,3 +92,42 @@ async def get_simulation_configurations(
     configurations = result.scalars().all()
 
     return configurations, total_items
+
+
+async def create_simulation_configuration(
+    session: AsyncSession, *, user_id: str, **params
+) -> tuple[SimulationConfiguration, SimulationReport]:
+    """Create a new simulation configuration and an associated initial report.
+
+    This function constructs a `SimulationConfiguration` and a `SimulationReport`
+    in memory, links them, adds them to the session, and then commits the transaction.
+    The report is initially created with a `PENDING` status.
+
+    Args:
+        session: The asynchronous database session.
+        user_id: The UUID of the user associated with this configuration.
+        **params: Additional parameters for creating the configuration:
+                  - `name` (str): The name of the simulation configuration.
+                  - `description` (str | None): An optional description.
+                  - `simulation_parameters` (dict): The dictionary of simulation settings.
+
+    Returns:
+        A tuple containing the newly created and committed `SimulationConfiguration`
+        and `SimulationReport` objects.
+
+    Raises:
+        Exception: Any exception raised during session operations (e.g., IntegrityError)
+                   will be propagated.
+    """
+    configuration = SimulationConfiguration(
+        name=params.get("name"),
+        description=params.get("description"),
+        simulation_parameters=params.get("simulation_parameters"),
+        user_id=uuid.UUID(user_id),
+    )
+    report = await create_simulation_report(
+        session, configuration=configuration, should_commit=False
+    )
+    session.add_all([configuration, report])
+    await session.commit()
+    return configuration, report
