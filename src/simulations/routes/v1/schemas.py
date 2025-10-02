@@ -3,7 +3,27 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.simulations.core.schemas import SimulationRequest
+from src.simulations.core.schemas import (
+    SimulationRequest,
+    SimulationResponse,
+    SweepResponse,
+)
+from src.simulations.models.enums import ReportStatus
+
+
+class SimulationReport(BaseModel):
+    id: uuid.UUID
+    status: ReportStatus
+    results: SimulationResponse | SweepResponse | None
+    error_message: str | None
+    configuration_id: uuid.UUID
+    created_at: datetime.datetime
+    completed_at: datetime.datetime | None
+    is_active: bool
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
 
 
 class SimulationConfigurationInfo(BaseModel):
@@ -86,3 +106,21 @@ class CreateSimulationResponse(BaseModel):
 
     simulation_configuration_id: uuid.UUID
     simulation_report_id: uuid.UUID
+
+
+class GetSimulationConfigurationResponse(SimulationConfigurationInfo):
+    """Represent the response for getting a single of simulation configuration."""
+
+    pass
+
+
+class GetSimulationConfigurationReportsResponse(BaseModel):
+    """Represent the response for getting a list of reports."""
+
+    reports: list[SimulationReport]
+
+
+class GetSimulationConfigurationReportResponse(SimulationReport):
+    """Represent the response for getting a single report."""
+
+    pass
