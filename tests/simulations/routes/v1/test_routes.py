@@ -1,6 +1,6 @@
 import uuid
 import pytest
-from another_fastapi_jwt_auth.exceptions import AuthJWTException, JWTDecodeError
+from another_fastapi_jwt_auth.exceptions import JWTDecodeError
 from fastapi import status
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from another_fastapi_jwt_auth import AuthJWT
 from src.main import app
 from src.core.db_session import get_session
+from src.simulations.core.schemas import SimulationRequest, ExponentialParams
 
-# Импортируем кастомные исключения
 from src.simulations.routes.v1.exceptions import (
     BadFilterFormat,
     InvalidColumn,
@@ -20,41 +20,28 @@ TEST_USER_ID = uuid.uuid4()
 BASE_URL = "/api/v1/simulations"
 
 
-# --- ФИКСУРЫ ДЛЯ ТЕСТОВ ---
-
-
 @pytest.fixture
 def client():
-    """Предоставляет TestClient для приложения."""
     return TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def setup_mocks(mocker):
-    """
-    Централизованная фикстура для мокирования зависимостей.
-    Применяется автоматически ко всем тестам.
-    """
-    # Мокаем зависимость AuthJWT
     mock_authorize = MagicMock()
     mock_authorize.get_jwt_subject.return_value = str(TEST_USER_ID)
     mocker.patch.object(AuthJWT, "jwt_required", return_value=None)
     app.dependency_overrides[AuthJWT] = lambda: mock_authorize
 
-    # Мокаем сессию БД
     mock_session = AsyncMock()
     app.dependency_overrides[get_session] = lambda: mock_session
 
     yield {"authorize": mock_authorize, "session": mock_session}
 
-    # Очистка после каждого теста
     app.dependency_overrides = {}
 
 
 @pytest.fixture
 def mock_simulation_configs():
-    """Предоставляет список мок-объектов конфигураций симуляций."""
-
     class MockSimConfig:
         def __init__(self, id, name, description):
             self.id = id
@@ -69,12 +56,8 @@ def mock_simulation_configs():
     ]
 
 
-# --- ТЕСТОВЫЕ СЦЕНАРИИ ---
-
-
 def test_get_simulations_unauthorized(client):
-    """Тест: эндпоинт должен требовать аутентификацию."""
-    app.dependency_overrides = {}  # Убираем моки для этого теста
+    app.dependency_overrides = {}
     with patch.object(
         AuthJWT,
         "jwt_required",
@@ -91,7 +74,6 @@ def test_get_simulations_unauthorized(client):
 def test_get_simulations_success_basic(
     mock_get_configs, client, mock_simulation_configs
 ):
-    """Тест: базовый успешный запрос с параметрами по умолчанию."""
     mock_get_configs.return_value = (
         mock_simulation_configs,
         len(mock_simulation_configs),
@@ -110,7 +92,6 @@ def test_get_simulations_success_basic(
 def test_get_simulations_with_pagination(
     mock_get_configs, client, mock_simulation_configs
 ):
-    """Тест: эндпоинт с параметрами пагинации."""
     mock_get_configs.return_value = ([mock_simulation_configs[0]], 10)
     response = client.get(f"{BASE_URL}?page=2&limit=5")
 
@@ -126,7 +107,6 @@ def test_get_simulations_with_pagination(
 def test_get_simulations_with_column_selection(
     mock_get_configs, client, mock_simulation_configs
 ):
-    """Тест: выборка определенного набора колонок."""
     mock_get_configs.return_value = (mock_simulation_configs, 2)
     response = client.get(f"{BASE_URL}?columns=name,description")
 
@@ -143,7 +123,6 @@ def test_get_simulations_with_column_selection(
     side_effect=InvalidColumn,
 )
 def test_get_simulations_with_invalid_column(mock_validator, client):
-    """Тест: запрос с несуществующей колонкой."""
     response = client.get(f"{BASE_URL}?columns=non_existent_field")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "Invalid columns" in response.json()["detail"]
@@ -153,7 +132,6 @@ def test_get_simulations_with_invalid_column(mock_validator, client):
 def test_get_simulations_with_filters(
     mock_get_configs, client, mock_simulation_configs
 ):
-    """Тест: фильтрация по имени и статусу отчета."""
     mock_get_configs.return_value = ([mock_simulation_configs[0]], 1)
     response = client.get(
         f"{BASE_URL}?filters=name:Test,report_status:completed"
@@ -192,7 +170,6 @@ def test_get_simulations_with_filters(
 def test_get_simulations_with_invalid_filters(
     client, mocker, invalid_filter, mock_path, exception, detail
 ):
-    """Тест: различные невалидные форматы фильтров."""
     mocker.patch(mock_path, side_effect=exception)
     response = client.get(f"{BASE_URL}?filters={invalid_filter}")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -201,7 +178,6 @@ def test_get_simulations_with_invalid_filters(
 
 @patch("src.simulations.routes.v1.routes.get_simulation_configurations")
 def test_get_simulations_no_results(mock_get_configs, client):
-    """Тест: ответ, когда ни одна конфигурация не подходит под фильтры."""
     mock_get_configs.return_value = ([], 0)
     response = client.get(f"{BASE_URL}?filters=name:DoesNotExist&limit=10")
 
@@ -209,5 +185,176 @@ def test_get_simulations_no_results(mock_get_configs, client):
     data = response.json()
     assert data["total_items"] == 0
     assert data["items"] == []
-    # Исправленное утверждение
     assert data["total_pages"] == 0
+
+
+def make_body(
+    *,
+    name: str = "My simulation",
+    description: str | None = "Test description",
+    num_channels: int = 2,
+    simulation_time: float = 10.0,
+    num_replications: int = 3,
+    arrival_rate: float = 1.2,
+    service_rate: float = 2.5,
+    random_seed: int | None = 42,
+):
+    return {
+        "name": name,
+        "description": description,
+        "simulationParameters": {
+            "numChannels": num_channels,
+            "simulationTime": simulation_time,
+            "numReplications": num_replications,
+            "arrivalProcess": {
+                "distribution": "exponential",
+                "rate": arrival_rate,
+            },
+            "serviceProcess": {
+                "distribution": "exponential",
+                "rate": service_rate,
+            },
+            "arrivalSchedule": None,
+            "randomSeed": random_seed,
+        },
+    }
+
+
+@patch("src.simulations.routes.v1.routes.create_simulation_configuration")
+def test_create_simulation_success(mock_create_config, client, setup_mocks):
+    config_id = uuid.uuid4()
+    report_id = uuid.uuid4()
+
+    class Cfg:
+        id = config_id
+
+    class Rep:
+        id = report_id
+
+    mock_create_config.return_value = (Cfg(), Rep())
+
+    body = make_body()
+    resp = client.post(BASE_URL, json=body)
+
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    data = resp.json()
+    assert data["simulation_configuration_id"] == str(config_id)
+    assert data["simulation_report_id"] == str(report_id)
+
+    kwargs = mock_create_config.call_args.kwargs
+    assert (
+        "user_id" in kwargs
+        and kwargs["user_id"] == setup_mocks["authorize"].get_jwt_subject()
+    )
+    assert kwargs["name"] == body["name"]
+    assert kwargs["description"] == body["description"]
+
+    sim_params = kwargs["simulation_parameters"]
+    assert "numChannels" in sim_params
+    assert "simulationTime" in sim_params
+    assert "numReplications" in sim_params
+    assert "arrivalProcess" in sim_params
+    assert "serviceProcess" in sim_params
+    assert sim_params["arrivalProcess"]["distribution"] == "exponential"
+    assert sim_params["serviceProcess"]["distribution"] == "exponential"
+
+
+def test_create_simulation_requires_auth(client):
+    app.dependency_overrides = {}
+    with patch.object(
+        AuthJWT,
+        "jwt_required",
+        side_effect=JWTDecodeError(
+            status.HTTP_401_UNAUTHORIZED, "Missing cookie"
+        ),
+    ):
+        resp = client.post(BASE_URL, json=make_body())
+    assert resp.status_code in (
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+    app.dependency_overrides[AuthJWT] = lambda: MagicMock(
+        jwt_required=MagicMock(side_effect=None)
+    )
+    app.dependency_overrides[get_session] = lambda: AsyncMock()
+
+
+@patch("src.simulations.routes.v1.routes.create_simulation_configuration")
+def test_create_simulation_validates_pydantic_aliases(
+    mock_create_config, client
+):
+    class Cfg:
+        id = uuid.uuid4()
+
+    class Rep:
+        id = uuid.uuid4()
+
+    mock_create_config.return_value = (Cfg(), Rep())
+
+    body = make_body()
+    body["simulationParameters"]["arrivalProcess"] = {
+        "distribution": "exponential",
+        "rate": 3.33,
+    }
+    body["simulationParameters"]["serviceProcess"] = {
+        "distribution": "exponential",
+        "rate": 5.55,
+    }
+
+    resp = client.post(BASE_URL, json=body)
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+
+    passed = mock_create_config.call_args.kwargs["simulation_parameters"]
+    model = SimulationRequest.model_validate(passed)
+    assert isinstance(model.arrival_process, ExponentialParams)
+    assert isinstance(model.service_process, ExponentialParams)
+    assert model.arrival_process.rate == 3.33
+    assert model.service_process.rate == 5.55
+
+
+@pytest.mark.parametrize(
+    "invalid_body, expected_status",
+    [
+        (
+            {"simulationParameters": make_body()["simulationParameters"]},
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ),
+        (
+            {
+                "name": "",
+                "simulationParameters": make_body()["simulationParameters"],
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ),
+        (
+            {
+                "name": "X",
+                "simulationParameters": {
+                    **make_body()["simulationParameters"],
+                    "numChannels": 0,
+                },
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ),
+        ({"name": "X"}, status.HTTP_422_UNPROCESSABLE_ENTITY),
+        (
+            {
+                "name": "X",
+                "simulationParameters": {
+                    **make_body()["simulationParameters"],
+                    "arrivalProcess": {"distribution": "unknown", "rate": 1.0},
+                },
+            },
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ),
+    ],
+)
+@patch(
+    "src.simulations.db_utils.simulation_configurations.create_simulation_configuration"
+)
+def test_create_simulation_validation_errors(
+    mock_create_config, client, invalid_body, expected_status
+):
+    resp = client.post(BASE_URL, json=invalid_body)
+    assert resp.status_code == expected_status
+    assert not mock_create_config.called
