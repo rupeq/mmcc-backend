@@ -16,6 +16,17 @@ from src.simulations.routes.v1.schemas import (
 
 
 def parse_search_query(search: str | None) -> dict[str, str]:
+    """Parse a search query string into a dictionary of filters.
+
+    Args:
+        search: The search query string, e.g., "key1:value1,key2:value2".
+
+    Returns:
+        A dictionary of filters.
+
+    Raises:
+        BadFilterFormat: If the search query format is invalid.
+    """
     if not search:
         return {}
 
@@ -32,6 +43,14 @@ def parse_search_query(search: str | None) -> dict[str, str]:
 
 
 def verify_report_status_value(filters: dict[str, str]) -> None:
+    """Verify if the report_status filter has a valid value.
+
+    Args:
+        filters: A dictionary of filters.
+
+    Raises:
+        InvalidReportStatus: If the report_status value is invalid.
+    """
     if "report_status" not in filters:
         return None
 
@@ -45,6 +64,19 @@ def verify_report_status_value(filters: dict[str, str]) -> None:
 
 
 def validate_simulation_columns(columns: list[str] | None) -> list[str] | None:
+    """Validate the requested simulation columns.
+
+    Ensures that all requested columns are valid and adds 'id' if not present.
+
+    Args:
+        columns: A list of column names to validate.
+
+    Returns:
+        A list of valid column names, including 'id', or None if no columns were specified.
+
+    Raises:
+        InvalidColumn: If any of the requested columns are invalid.
+    """
     if not columns:
         return None
 
@@ -72,6 +104,18 @@ def get_simulations_response(
     page: int | None,
     columns: list[str] | None = None,
 ) -> GetSimulationsResponse:
+    """Construct the GetSimulationsResponse object.
+
+    Args:
+        configs: A sequence of simulation configuration rows.
+        total_items: The total number of items.
+        limit: The number of items per page.
+        page: The current page number.
+        columns: A list of columns to include in the response.
+
+    Returns:
+        A GetSimulationsResponse object.
+    """
     items_data = []
     fields_to_extract = (
         columns if columns else SimulationConfigurationInfo.model_fields.keys()

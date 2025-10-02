@@ -21,6 +21,27 @@ async def get_simulation_configurations(
     page: int | None = None,
     limit: int | None = None,
 ) -> tuple[Sequence[Row[Any] | RowMapping | Any], Any]:
+    """Retrieve simulation configurations from the database.
+
+    Args:
+        session: The asynchronous database session.
+        user_id: The ID of the user whose configurations are to be retrieved.
+        columns: A list of columns to load. If provided, 'id' must be included.
+        filters: A dictionary of filters to apply to the query.
+                 Supported filters include:
+                 - report_status: Filters by the status of associated reports.
+                 - Other columns in SimulationConfiguration can be used for ilike filtering.
+        page: The page number for pagination.
+        limit: The number of items per page for pagination.
+
+    Returns:
+        A tuple containing:
+        - A sequence of simulation configurations.
+        - The total number of items matching the query (before pagination).
+
+    Raises:
+        IdColumnRequiredException: If 'columns' is provided and does not include 'id'.
+    """
     stmt = select(SimulationConfiguration).where(
         SimulationConfiguration.user_id == user_id,
         SimulationConfiguration.is_active == True,

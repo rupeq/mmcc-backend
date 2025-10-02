@@ -48,6 +48,23 @@ async def get_simulations(
     page: int | None = Query(None, ge=1, description="Page number"),
     limit: int | None = Query(None, ge=1, le=100, description="Items per page"),
 ):
+    """Get a list of simulation configurations.
+
+    Args:
+        authorize: Dependency for JWT authentication.
+        session: Asynchronous database session.
+        columns: Comma-separated list of columns to return.
+        filters: Search filters in key:value format, comma-separated.
+        page: Page number for pagination.
+        limit: Number of items per page.
+
+    Returns:
+        A response containing a list of simulation configurations.
+
+    Raises:
+        HTTPException: If authentication fails, filters are invalid, columns are invalid,
+                       or an internal server error occurs.
+    """
     authorize.jwt_required()
     user_id = authorize.get_jwt_subject()
 
@@ -83,7 +100,9 @@ async def get_simulations(
             limit=limit,
         )
     except IdColumnRequiredException:
-        logger.exception(msg="Unexpected error: id must be in the columns list.")
+        logger.exception(
+            msg="Unexpected error: id must be in the columns list."
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
