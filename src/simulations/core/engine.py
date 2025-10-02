@@ -1,11 +1,14 @@
 import heapq
 import math
+import logging
 
 from scipy import stats as scipy_stats
 import numpy as np
 
 from src.simulations.core.distributions import get_distribution, Distribution
 from src.simulations.core.enums import EventType
+from src.simulations.core.events import Event
+from src.simulations.core.statistics import SimulationStatistics
 from src.simulations.core.schemas import (
     SimulationRequest,
     SimulationMetrics,
@@ -20,257 +23,388 @@ from src.simulations.core.schemas import (
 )
 from src.simulations.core.utils import set_nested_attr
 
+logger = logging.getLogger(__name__)
+
+
+class ChannelManager:
+    """Manage channel availability and allocation for the G/G/c/c system"""
+
+    def __init__(self, num_channels: int):
+        if num_channels <= 0:
+            raise ValueError(
+                f"Number of channels must be positive, got {num_channels}"
+            )
+        self.num_channels = num_channels
+        self.channels_free_time = [0.0] * num_channels
+
+    def get_available_channel(self, current_time: float) -> int | None:
+        """
+        Find the first available channel at current_time.
+
+        Returns:
+            Channel ID if available, None if all busy.
+        """
+        earliest_free_time = min(self.channels_free_time)
+
+        if earliest_free_time <= current_time:
+            return self.channels_free_time.index(earliest_free_time)
+
+        return None
+
+    def allocate_channel(self, channel_id: int, free_at_time: float) -> None:
+        """Mark a channel as busy until free_at_time"""
+        if not 0 <= channel_id < self.num_channels:
+            raise ValueError(f"Invalid channel_id: {channel_id}")
+        self.channels_free_time[channel_id] = free_at_time
+
+    def get_utilization_stats(self, simulation_time: float) -> dict[str, float]:
+        """Calculate channel utilization statistics"""
+        total_channel_time = self.num_channels * simulation_time
+        return {
+            "total_channel_time": total_channel_time,
+            "num_channels": self.num_channels,
+        }
+
+
+class NonStationaryExponential(Distribution):
+    """Non-stationary exponential distribution with piecewise-constant rates"""
+
+    def __init__(
+        self,
+        schedule: list[dict],
+        simulator: "Simulator",
+        rng: np.random.Generator,
+    ):
+        super().__init__(rng)
+        self.schedule = schedule
+        self.simulator = simulator
+
+    def generate(self) -> float:
+        """Generate inter-arrival time based on current simulation time"""
+        self._generation_count += 1
+        current_rate = self._get_current_rate()
+        return self.rng.exponential(1.0 / current_rate)
+
+    def _get_current_rate(self) -> float:
+        """Get rate for current simulation time"""
+        for interval in self.schedule:
+            if self.simulator.clock < interval["end_time"]:
+                return interval["rate"]
+
+        return self.schedule[-1]["rate"]
+
+    def get_mean(self) -> float:
+        """Average mean across all intervals"""
+        return sum(1.0 / interval["rate"] for interval in self.schedule) / len(
+            self.schedule
+        )
+
+    def get_params(self) -> dict:
+        return {"schedule": self.schedule, "type": "non_stationary"}
+
+    def __repr__(self) -> str:
+        return f"NonStationaryExponential(intervals={len(self.schedule)})"
+
 
 class Simulator:
-    """Discrete-event simulator for G/G/c/c queuing system.
+    """
+    Discrete-Event Simulator for G/G/c/c queuing system (no queue, rejections only).
 
-    Attributes:
-        params: Simulation configuration parameters.
-        clock: Current simulation time.
-        event_queue: Priority queue of future events.
-        channels_free_time: Array tracking when each channel becomes free.
-        arrival_distribution: Distribution object for inter-arrival times.
-        service_distribution: Distribution object for service times.
-        stats: Dictionary collecting simulation statistics.
-        gantt_chart_data: List of Gantt chart items for visualization.
-        service_times_log: List of all service times for analysis.
+    This simulator implements a loss system where:
+    - Arrivals follow a general distribution (or non-stationary exponential)
+    - Service times follow a general distribution
+    - c channels are available
+    - No waiting queue exists (c = queue capacity)
+    - Requests are rejected if all channels are busy
     """
 
     def __init__(self, params: SimulationRequest) -> None:
-        """Initialize simulator with given parameters.
-
-        Args:
-            params: Configuration parameters for the simulation.
-        """
         self.params = params
+        self._validate_parameters()
 
-        # Setup RNG for reproducibility
+        # Initialize RNG
         if params.random_seed is not None:
             self.rng = np.random.default_rng(params.random_seed)
         else:
             self.rng = np.random.default_rng()
 
+        # Simulation state
         self.clock = 0.0
-        self.event_queue: list = []
-        self.channels_free_time = [0.0] * params.num_channels
+        self.event_queue: list[Event] = []
 
-        # Process non-stationary schedule if provided
-        self.processed_schedule = None
-        if self.params.arrival_schedule:
-            self.processed_schedule = []
-            current_time = 0.0
-            for item in self.params.arrival_schedule:
-                current_time += item.duration
-                self.processed_schedule.append(
-                    {"end_time": current_time, "rate": item.rate}
-                )
+        # Components
+        self.channels = ChannelManager(params.num_channels)
+        self.stats = SimulationStatistics()
 
-        # Create distribution objects
-        self.arrival_distribution = self._get_arrival_distribution()
+        # Distributions
+        self.arrival_distribution = self._create_arrival_distribution()
         self.service_distribution = get_distribution(
             params.service_process, rng=self.rng
         )
 
-        # Statistics tracking
-        self.stats = {
-            "total_requests": 0,
-            "processed_requests": 0,
-            "rejected_requests": 0,
-            "total_busy_time": 0.0,
-        }
-        self.gantt_chart_data: list[GanttChartItem] = []
-        self.service_times_log: list[float] = []
+        logger.debug(
+            "Initialized simulator: channels=%d, sim_time=%.2f, arrival=%s, service=%s",
+            params.num_channels,
+            params.simulation_time,
+            self.arrival_distribution,
+            self.service_distribution,
+        )
 
-    def _get_arrival_distribution(self) -> Distribution:
-        """Create arrival time distribution.
+    def _validate_parameters(self) -> None:
+        """Validate simulation parameters"""
+        if self.params.num_channels <= 0:
+            raise ValueError("num_channels must be positive")
+        if self.params.simulation_time <= 0:
+            raise ValueError("simulation_time must be positive")
+        if self.params.num_replications < 1:
+            raise ValueError("num_replications must be at least 1")
 
-        Returns:
-            Distribution object for generating inter-arrival times.
+    def _create_arrival_distribution(self) -> Distribution:
+        """Create arrival distribution (stationary or non-stationary)"""
+        if self.params.arrival_schedule:
+            # Non-stationary: piecewise-constant rates
+            processed_schedule = []
+            current_time = 0.0
 
-        Note:
-            For non-stationary arrivals, returns a wrapper that dynamically
-            adjusts the rate based on current simulation time.
-        """
-        if self.processed_schedule:
-            # Non-stationary: return exponential with time-varying rate
-            class NonStationaryExponential(Distribution):
-                def __init__(
-                    self,
-                    schedule: list,
-                    simulator: "Simulator",
-                    rng: np.random.Generator,
-                ):
-                    super().__init__(rng)
-                    self.schedule = schedule
-                    self.simulator = simulator
+            for item in self.params.arrival_schedule:
+                current_time += item.duration
+                processed_schedule.append(
+                    {"end_time": current_time, "rate": item.rate}
+                )
 
-                def generate(self) -> float:
-                    """Generate inter-arrival time based on current clock."""
-                    current_rate = None
-                    for interval in self.schedule:
-                        if self.simulator.clock < interval["end_time"]:
-                            current_rate = interval["rate"]
-                            break
-
-                    if current_rate is None:
-                        current_rate = self.schedule[-1]["rate"]
-
-                    return self.rng.exponential(1.0 / current_rate)
-
-                def get_mean(self) -> float:
-                    # Average rate across schedule
-                    return sum(
-                        1.0 / interval["rate"] for interval in self.schedule
-                    ) / len(self.schedule)
-
-                def get_params(self) -> dict:
-                    return {"schedule": self.schedule}
-
-                def __repr__(self) -> str:
-                    return f"NonStationaryExponential(intervals={len(self.schedule)})"
-
-            return NonStationaryExponential(
-                self.processed_schedule, self, self.rng
+            logger.debug(
+                "Using non-stationary arrivals with %d intervals",
+                len(processed_schedule),
             )
 
+            return NonStationaryExponential(processed_schedule, self, self.rng)
+
+        # Stationary distribution
         return get_distribution(self.params.arrival_process, rng=self.rng)
 
     def run(self) -> SimulationResult:
-        """Execute the simulation.
+        """
+        Execute the discrete-event simulation.
 
         Returns:
-            SimulationResult containing metrics and visualization data.
+            SimulationResult containing metrics and visualization data
         """
-        self._schedule_event(
-            self.arrival_distribution.generate(), EventType.ARRIVAL
+        logger.debug(
+            "Starting simulation run (T=%.2f)", self.params.simulation_time
         )
 
+        # Schedule first arrival
+        self._schedule_event(
+            delay=self.arrival_distribution.generate(),
+            event_type=EventType.ARRIVAL,
+        )
+
+        events_processed = 0
         while self.event_queue and self.clock < self.params.simulation_time:
-            time, event_type, data = heapq.heappop(self.event_queue)
-            self.clock = time
+            event = heapq.heappop(self.event_queue)
+            self.clock = event.time
 
             if self.clock > self.params.simulation_time:
                 break
 
-            if event_type == EventType.ARRIVAL:
+            if event.event_type == EventType.ARRIVAL:
                 self._handle_arrival()
-            elif event_type == EventType.DEPARTURE:
-                pass  # Departures don't need additional handling
+            elif event.event_type == EventType.DEPARTURE:
+                self._handle_departure(event.data.get("channel_id"))
+
+            events_processed += 1
+
+        logger.debug(
+            "Simulation complete: %d events processed, final_time=%.2f",
+            events_processed,
+            self.clock,
+        )
 
         return self._calculate_results()
 
     def _schedule_event(
-        self, delay: float, event_type: str, data: dict | None = None
+        self, delay: float, event_type: EventType, data: dict | None = None
     ) -> None:
-        """Schedule a future event.
-
-        Args:
-            delay: Time delay from current clock.
-            event_type: Type of event to schedule.
-            data: Optional event data dictionary.
-        """
-        heapq.heappush(
-            self.event_queue, (self.clock + delay, event_type, data or {})
+        """Schedule a future event"""
+        event = Event(
+            time=self.clock + delay, event_type=event_type, data=data or {}
         )
+        heapq.heappush(self.event_queue, event)
 
     def _handle_arrival(self) -> None:
-        """Process an arrival event."""
-        self.stats["total_requests"] += 1
+        """
+        Handle customer arrival event.
+
+        G/G/c/c logic:
+        1. Check if any channel is free
+        2. If yes: allocate channel, schedule departure
+        3. If no: reject (loss system - no queue)
+        4. Schedule next arrival
+        """
+        self.stats.total_requests += 1
 
         # Schedule next arrival
         self._schedule_event(
-            self.arrival_distribution.generate(), EventType.ARRIVAL
+            delay=self.arrival_distribution.generate(),
+            event_type=EventType.ARRIVAL,
         )
 
-        # Find earliest available channel
-        earliest_free_time = min(self.channels_free_time)
+        # Try to allocate a channel
+        channel_id = self.channels.get_available_channel(self.clock)
 
-        if earliest_free_time <= self.clock:
-            # Channel available - accept request
-            channel_id = self.channels_free_time.index(earliest_free_time)
-            self.stats["processed_requests"] += 1
-
-            service_time = self.service_distribution.generate()
-            self.service_times_log.append(service_time)
-
-            departure_time = self.clock + service_time
-            self.stats["total_busy_time"] += service_time
-
-            self.channels_free_time[channel_id] = departure_time
-
-            self._schedule_event(
-                service_time, EventType.DEPARTURE, {"channel_id": channel_id}
-            )
-
-            self.gantt_chart_data.append(
-                GanttChartItem(
-                    channel=channel_id,
-                    start=self.clock,
-                    end=departure_time,
-                    duration=service_time,
-                )
-            )
+        if channel_id is not None:
+            # Channel available - process request
+            self._process_request(channel_id)
         else:
             # All channels busy - reject
-            self.stats["rejected_requests"] += 1
+            self._reject_request()
+
+    def _process_request(self, channel_id: int) -> None:
+        """Process an accepted request on the given channel"""
+        self.stats.processed_requests += 1
+
+        # Generate service time
+        service_time = self.service_distribution.generate()
+        self.stats.record_service_time(service_time)
+
+        # Calculate departure time
+        departure_time = self.clock + service_time
+
+        # Update channel allocation
+        self.channels.allocate_channel(channel_id, departure_time)
+
+        # Track busy time for utilization
+        self.stats.total_busy_time += service_time
+
+        # Schedule departure event
+        self._schedule_event(
+            delay=service_time,
+            event_type=EventType.DEPARTURE,
+            data={"channel_id": channel_id},
+        )
+
+        # Record for Gantt chart
+        self.stats.gantt_items.append(
+            GanttChartItem(
+                channel=channel_id,
+                start=self.clock,
+                end=departure_time,
+                duration=service_time,
+            )
+        )
+
+        logger.debug(
+            "Request accepted: channel=%d, service_time=%.4f, departure=%.4f",
+            channel_id,
+            service_time,
+            departure_time,
+        )
+
+    def _reject_request(self) -> None:
+        """Handle a rejected request (all channels busy)"""
+        self.stats.rejected_requests += 1
+        logger.debug(
+            "Request rejected: all %d channels busy at t=%.4f",
+            self.params.num_channels,
+            self.clock,
+        )
+
+    def _handle_departure(self, channel_id: int | None) -> None:
+        """
+        Handle departure event (request completes service).
+
+        Note: In G/G/c/c system, departures just free up channels.
+        No queue to process.
+        """
+        if channel_id is not None:
+            logger.debug(
+                "Request departed: channel=%d, t=%.4f", channel_id, self.clock
+            )
+        # Channel is automatically freed by time-based logic
 
     def _calculate_results(self) -> SimulationResult:
-        """Calculate final simulation metrics.
-
-        Returns:
-            SimulationResult with computed metrics.
-        """
+        """Calculate final simulation metrics and prepare results"""
         total_time = self.params.simulation_time
-        total_channel_time = self.params.num_channels * total_time
+        channel_stats = self.channels.get_utilization_stats(total_time)
+        total_channel_time = channel_stats["total_channel_time"]
 
+        # Calculate metrics
         metrics = SimulationMetrics(
-            total_requests=self.stats["total_requests"],
-            processed_requests=self.stats["processed_requests"],
-            rejected_requests=self.stats["rejected_requests"],
+            total_requests=self.stats.total_requests,
+            processed_requests=self.stats.processed_requests,
+            rejected_requests=self.stats.rejected_requests,
             rejection_probability=(
-                self.stats["rejected_requests"] / self.stats["total_requests"]
-                if self.stats["total_requests"] > 0
-                else 0
+                self.stats.rejected_requests / self.stats.total_requests
+                if self.stats.total_requests > 0
+                else 0.0
             ),
             avg_channel_utilization=(
-                self.stats["total_busy_time"] / total_channel_time
+                self.stats.total_busy_time / total_channel_time
                 if total_channel_time > 0
-                else 0
+                else 0.0
             ),
-            throughput=self.stats["processed_requests"] / total_time,
+            throughput=self.stats.processed_requests / total_time,
+        )
+
+        logger.debug(
+            "Final metrics: requests=%d, processed=%d, rejected=%d, "
+            "rejection_prob=%.4f, utilization=%.4f",
+            metrics.total_requests,
+            metrics.processed_requests,
+            metrics.rejected_requests,
+            metrics.rejection_probability,
+            metrics.avg_channel_utilization,
         )
 
         return SimulationResult(
             metrics=metrics,
-            gantt_chart=self.gantt_chart_data,
-            raw_service_times=self.service_times_log,
+            gantt_chart=self.stats.gantt_items,
+            raw_service_times=self.stats.service_times,
         )
 
 
 def run_replications(params: SimulationRequest) -> SimulationResponse:
-    """Run multiple simulation replications and aggregates results.
+    """
+    Run multiple replications of the simulation and aggregate results.
 
     Args:
-        params: The parameters for the simulation series.
+        params: Simulation configuration
 
     Returns:
-        A response object containing aggregated metrics and results from
-        each individual replication.
+        SimulationResponse with aggregated metrics and individual replications
     """
+    logger.info(
+        "Running %d replications with seed=%s",
+        params.num_replications,
+        params.random_seed,
+    )
+
     replication_results = []
+
     for i in range(params.num_replications):
+        # Each replication gets a different seed (if seed is set)
         if params.random_seed is not None:
             sim_params = params.model_copy(
                 update={"random_seed": params.random_seed + i}, deep=True
             )
         else:
             sim_params = params
+
         simulator = Simulator(sim_params)
-        replication_results.append(simulator.run())
+        result = simulator.run()
+        replication_results.append(result)
+
+        logger.debug(
+            "Replication %d/%d complete: rejection_prob=%.4f",
+            i + 1,
+            params.num_replications,
+            result.metrics.rejection_probability,
+        )
 
     num_reps = len(replication_results)
 
     if num_reps < 2:
+        # Single replication - no confidence intervals
         metrics = replication_results[0].metrics
         agg_metrics = AggregatedMetrics(
             num_replications=num_reps,
@@ -281,11 +415,15 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
             avg_channel_utilization=metrics.avg_channel_utilization,
             throughput=metrics.throughput,
         )
+
+        logger.info("Single replication complete")
+
         return SimulationResponse(
             aggregated_metrics=agg_metrics,
             replications=replication_results,
         )
 
+    # Multiple replications - calculate statistics
     rejection_probs = [
         r.metrics.rejection_probability for r in replication_results
     ]
@@ -294,19 +432,20 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
     ]
     throughputs = [r.metrics.throughput for r in replication_results]
 
+    # Point estimates
     mean_rejection_prob = np.mean(rejection_probs)
     mean_utilization = np.mean(utilizations)
     mean_throughput = np.mean(throughputs)
 
+    # Standard deviations
     std_rejection_prob = float(np.std(rejection_probs, ddof=1))
     std_utilization = float(np.std(utilizations, ddof=1))
     std_throughput = float(np.std(throughputs, ddof=1))
 
-    # level = 95%
+    # Confidence intervals (95% by default)
     confidence_level = 0.95
     degrees_freedom = num_reps - 1
     t_critical = scipy_stats.t.ppf((1 + confidence_level) / 2, degrees_freedom)
-
     sqrt_n = math.sqrt(float(num_reps))
 
     h_rejection = t_critical * (std_rejection_prob / sqrt_n)
@@ -341,6 +480,12 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
         ),
     )
 
+    logger.info(
+        "Replications complete: mean_rejection=%.4f ± %.4f",
+        mean_rejection_prob,
+        h_rejection,
+    )
+
     return SimulationResponse(
         aggregated_metrics=aggregated_metrics,
         replications=replication_results,
@@ -348,34 +493,40 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
 
 
 def run_sweep(params: SweepRequest) -> SweepResponse:
-    """Run a series of simulations (a parameter sweep) by varying a single parameter.
-
-    Iterates through a predefined list of values for a specified parameter,
-    running a full simulation (including replications) for each value.
-    The aggregated results for each parameter value are then collected.
-    Supports nested parameters using dot notation (e.g., 'arrival_process.rate').
+    """
+    Run parameter sweep (sensitivity analysis).
 
     Args:
-        params (SweepRequest): A `SweepRequest` object containing the base
-            simulation parameters and the definition of the parameter to sweep.
+        params: Sweep configuration with base request and parameter to vary
 
     Returns:
-        SweepResponse: A `SweepResponse` object containing a list of
-            `SweepResultItem`s, where each item holds the parameter value
-            and the corresponding `SimulationResponse`.
+        SweepResponse containing results for each parameter value
     """
-    sweep_results = []
     param_name = params.sweep_parameter.name
+    param_values = params.sweep_parameter.values
 
-    for value in params.sweep_parameter.values:
+    logger.info(
+        "Running sweep: parameter=%s, values=%s", param_name, param_values
+    )
+
+    sweep_results = []
+
+    for value in param_values:
+        # Create copy with modified parameter
         request_for_value = params.base_request.model_copy(deep=True)
-
         set_nested_attr(request_for_value, param_name, value)
 
+        logger.debug("Sweep: %s = %s", param_name, value)
+
+        # Run replications
         simulation_response = run_replications(request_for_value)
 
         sweep_results.append(
             SweepResultItem(parameter_value=value, result=simulation_response)
         )
+
+    logger.info(
+        "Sweep complete: %d parameter values tested", len(sweep_results)
+    )
 
     return SweepResponse(results=sweep_results)
