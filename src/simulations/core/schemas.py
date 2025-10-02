@@ -111,21 +111,38 @@ class AggregatedMetrics(BaseModel):
 
 
 class SimulationRequest(BaseModel):
-    """Represent a request to run a simulation."""
-
     num_channels: int = Field(..., gt=0, alias="numChannels")
     simulation_time: float = Field(..., gt=0, alias="simulationTime")
     num_replications: int = Field(1, ge=1, alias="numReplications")
-
     arrival_process: DistributionParams = Field(..., alias="arrivalProcess")
     service_process: DistributionParams = Field(..., alias="serviceProcess")
-
-    # optional for nonstationary flow
     arrival_schedule: list[ArrivalScheduleItem] | None = Field(
         None, alias="arrivalSchedule"
     )
-
     random_seed: int | None = Field(None, alias="randomSeed")
+
+    collect_gantt_data: bool = Field(
+        True,
+        alias="collectGanttData",
+        description="Collect Gantt chart data (memory intensive for long simulations)",
+    )
+    collect_service_times: bool = Field(
+        True,
+        alias="collectServiceTimes",
+        description="Collect raw service time samples",
+    )
+    max_gantt_items: int | None = Field(
+        10000,
+        alias="maxGanttItems",
+        ge=0,
+        description="Maximum Gantt items to collect (None = unlimited, 0 = disabled)",
+    )
+    max_service_time_samples: int | None = Field(
+        1000,
+        alias="maxServiceTimeSamples",
+        ge=0,
+        description="Maximum service time samples to collect (None = unlimited, 0 = disabled)",
+    )
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -142,6 +159,28 @@ class SimulationRequest(BaseModel):
                     f"Arrival schedule duration ({total_duration}) is less than "
                     f"simulation time ({self.simulation_time})"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_data_collection_limits(self):
+        """Validate data collection configuration"""
+        if not self.collect_gantt_data and self.max_gantt_items != 0:
+            self.max_gantt_items = 0
+
+        if (
+            not self.collect_service_times
+            and self.max_service_time_samples != 0
+        ):
+            self.max_service_time_samples = 0
+
+        if self.max_gantt_items and self.max_gantt_items > 100000:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Very high max_gantt_items (%d) may cause memory issues",
+                self.max_gantt_items,
+            )
+
         return self
 
 
