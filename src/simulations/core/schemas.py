@@ -1,6 +1,6 @@
 from typing import Union, Literal
 
-from pydantic import Field, BaseModel, ConfigDict
+from pydantic import Field, BaseModel, ConfigDict, model_validator
 
 from src.simulations.core.enums import DistributionType
 
@@ -130,6 +130,19 @@ class SimulationRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+
+    @model_validator(mode="after")
+    def validate_arrival_schedule(self):
+        if self.arrival_schedule:
+            total_duration = sum(
+                item.duration for item in self.arrival_schedule
+            )
+            if total_duration < self.simulation_time:
+                raise ValueError(
+                    f"Arrival schedule duration ({total_duration}) is less than "
+                    f"simulation time ({self.simulation_time})"
+                )
+        return self
 
 
 class SimulationResult(BaseModel):

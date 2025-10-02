@@ -1,11 +1,10 @@
 import heapq
 import math
-from typing import Callable
 
 from scipy import stats as scipy_stats
 import numpy as np
 
-from src.simulations.core.distributions import get_generator
+from src.simulations.core.distributions import get_distribution, Distribution
 from src.simulations.core.enums import EventType
 from src.simulations.core.schemas import (
     SimulationRequest,
@@ -23,23 +22,39 @@ from src.simulations.core.utils import set_nested_attr
 
 
 class Simulator:
-    """Run a single G/G/c/c queuing system simulation."""
+    """Discrete-event simulator for G/G/c/c queuing system.
 
-    def __init__(self, params: SimulationRequest):
-        """Initialize the simulator with given parameters.
+    Attributes:
+        params: Simulation configuration parameters.
+        clock: Current simulation time.
+        event_queue: Priority queue of future events.
+        channels_free_time: Array tracking when each channel becomes free.
+        arrival_distribution: Distribution object for inter-arrival times.
+        service_distribution: Distribution object for service times.
+        stats: Dictionary collecting simulation statistics.
+        gantt_chart_data: List of Gantt chart items for visualization.
+        service_times_log: List of all service times for analysis.
+    """
+
+    def __init__(self, params: SimulationRequest) -> None:
+        """Initialize simulator with given parameters.
 
         Args:
-            params: A Pydantic model containing all simulation settings.
+            params: Configuration parameters for the simulation.
         """
         self.params = params
 
+        # Setup RNG for reproducibility
         if params.random_seed is not None:
-            np.random.seed(params.random_seed)
+            self.rng = np.random.default_rng(params.random_seed)
+        else:
+            self.rng = np.random.default_rng()
 
         self.clock = 0.0
         self.event_queue: list = []
         self.channels_free_time = [0.0] * params.num_channels
 
+        # Process non-stationary schedule if provided
         self.processed_schedule = None
         if self.params.arrival_schedule:
             self.processed_schedule = []
@@ -50,9 +65,13 @@ class Simulator:
                     {"end_time": current_time, "rate": item.rate}
                 )
 
-        self.arrival_generator = self._get_arrival_generator()
-        self.service_generator = get_generator(params.service_process)
+        # Create distribution objects
+        self.arrival_distribution = self._get_arrival_distribution()
+        self.service_distribution = get_distribution(
+            params.service_process, rng=self.rng
+        )
 
+        # Statistics tracking
         self.stats = {
             "total_requests": 0,
             "processed_requests": 0,
@@ -62,94 +81,121 @@ class Simulator:
         self.gantt_chart_data: list[GanttChartItem] = []
         self.service_times_log: list[float] = []
 
-    def _get_arrival_generator(self) -> Callable[[], float]:
-        """Create a generator for inter-arrival times.
+    def _get_arrival_distribution(self) -> Distribution:
+        """Create arrival time distribution.
 
         Returns:
-            A function that, when called, returns the time until the next arrival.
-            This function handles both stationary and non-stationary (scheduled)
-            arrival processes.
+            Distribution object for generating inter-arrival times.
+
+        Note:
+            For non-stationary arrivals, returns a wrapper that dynamically
+            adjusts the rate based on current simulation time.
         """
         if self.processed_schedule:
+            # Non-stationary: return exponential with time-varying rate
+            class NonStationaryExponential(Distribution):
+                def __init__(
+                    self,
+                    schedule: list,
+                    simulator: "Simulator",
+                    rng: np.random.Generator,
+                ):
+                    super().__init__(rng)
+                    self.schedule = schedule
+                    self.simulator = simulator
 
-            def non_stationary_generator() -> float:
-                """Generate next arrival time based on the current clock."""
-                current_rate = None
+                def generate(self) -> float:
+                    """Generate inter-arrival time based on current clock."""
+                    current_rate = None
+                    for interval in self.schedule:
+                        if self.simulator.clock < interval["end_time"]:
+                            current_rate = interval["rate"]
+                            break
 
-                for interval in self.processed_schedule:
-                    if self.clock < interval["end_time"]:
-                        current_rate = interval["rate"]
-                        break
+                    if current_rate is None:
+                        current_rate = self.schedule[-1]["rate"]
 
-                if current_rate is None:
-                    current_rate = self.processed_schedule[-1]["rate"]
+                    return self.rng.exponential(1.0 / current_rate)
 
-                return np.random.exponential(1.0 / current_rate)
+                def get_mean(self) -> float:
+                    # Average rate across schedule
+                    return sum(
+                        1.0 / interval["rate"] for interval in self.schedule
+                    ) / len(self.schedule)
 
-            return non_stationary_generator
+                def get_params(self) -> dict:
+                    return {"schedule": self.schedule}
 
-        return get_generator(self.params.arrival_process)
+                def __repr__(self) -> str:
+                    return f"NonStationaryExponential(intervals={len(self.schedule)})"
+
+            return NonStationaryExponential(
+                self.processed_schedule, self, self.rng
+            )
+
+        return get_distribution(self.params.arrival_process, rng=self.rng)
 
     def run(self) -> SimulationResult:
-        """Execute the main simulation loop.
-
-        The loop processes events from the event queue until the simulation
-        time is exceeded or the queue is empty.
+        """Execute the simulation.
 
         Returns:
-            An object containing the calculated metrics and Gantt chart data.
+            SimulationResult containing metrics and visualization data.
         """
-        self._schedule_event(self.arrival_generator(), EventType.ARRIVAL)
+        self._schedule_event(
+            self.arrival_distribution.generate(), EventType.ARRIVAL
+        )
 
         while self.event_queue and self.clock < self.params.simulation_time:
             time, event_type, data = heapq.heappop(self.event_queue)
-
             self.clock = time
+
             if self.clock > self.params.simulation_time:
                 break
 
             if event_type == EventType.ARRIVAL:
                 self._handle_arrival()
-
             elif event_type == EventType.DEPARTURE:
-                pass
+                pass  # Departures don't need additional handling
 
         return self._calculate_results()
 
-    def _schedule_event(self, delay: float, event_type: str, data=None):
-        """Add a new event to the event queue.
+    def _schedule_event(
+        self, delay: float, event_type: str, data: dict | None = None
+    ) -> None:
+        """Schedule a future event.
 
         Args:
-            delay: The time from now when the event should occur.
-            event_type: The type of the event (e.g., ARRIVAL).
-            data: Optional dictionary with event-specific data.
+            delay: Time delay from current clock.
+            event_type: Type of event to schedule.
+            data: Optional event data dictionary.
         """
         heapq.heappush(
             self.event_queue, (self.clock + delay, event_type, data or {})
         )
 
-    def _handle_arrival(self):
-        """Process an arrival event.
-
-        Checks for an available channel. If found, occupies it and schedules
-        a departure. Otherwise, the request is rejected. Also, schedules the
-        next arrival.
-        """
+    def _handle_arrival(self) -> None:
+        """Process an arrival event."""
         self.stats["total_requests"] += 1
 
-        self._schedule_event(self.arrival_generator(), EventType.ARRIVAL)
+        # Schedule next arrival
+        self._schedule_event(
+            self.arrival_distribution.generate(), EventType.ARRIVAL
+        )
 
+        # Find earliest available channel
         earliest_free_time = min(self.channels_free_time)
 
         if earliest_free_time <= self.clock:
+            # Channel available - accept request
             channel_id = self.channels_free_time.index(earliest_free_time)
-
             self.stats["processed_requests"] += 1
-            service_time = self.service_generator()
-            self.service_times_log.append(service_time)
-            departure_time = self.clock + service_time
 
+            service_time = self.service_distribution.generate()
+            self.service_times_log.append(service_time)
+
+            departure_time = self.clock + service_time
             self.stats["total_busy_time"] += service_time
+
             self.channels_free_time[channel_id] = departure_time
 
             self._schedule_event(
@@ -165,15 +211,14 @@ class Simulator:
                 )
             )
         else:
+            # All channels busy - reject
             self.stats["rejected_requests"] += 1
 
     def _calculate_results(self) -> SimulationResult:
-        """Calculate and aggregates simulation metrics.
-
-        This method is called after the simulation loop finishes.
+        """Calculate final simulation metrics.
 
         Returns:
-            A SimulationResult object with final metrics.
+            SimulationResult with computed metrics.
         """
         total_time = self.params.simulation_time
         total_channel_time = self.params.num_channels * total_time

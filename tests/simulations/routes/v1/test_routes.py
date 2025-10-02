@@ -454,6 +454,7 @@ class TestDeleteSimulationConfigurationReport:
 # tests/simulations/routes/v1/test_routes.py
 # Replace the TestAuthenticationAndAuthorization class with this corrected version:
 
+
 class TestAuthenticationAndAuthorization:
     """Test suite for authentication and authorization."""
 
@@ -469,11 +470,11 @@ class TestAuthenticationAndAuthorization:
         ]
 
         with patch.object(
-                AuthJWT,
-                "jwt_required",
-                side_effect=JWTDecodeError(
-                    status.HTTP_401_UNAUTHORIZED, "Unauthorized"
-                ),
+            AuthJWT,
+            "jwt_required",
+            side_effect=JWTDecodeError(
+                status.HTTP_401_UNAUTHORIZED, "Unauthorized"
+            ),
         ):
             for url in get_endpoints:
                 response = client.get(url)
@@ -491,11 +492,11 @@ class TestAuthenticationAndAuthorization:
         ]
 
         with patch.object(
-                AuthJWT,
-                "jwt_required",
-                side_effect=JWTDecodeError(
-                    status.HTTP_401_UNAUTHORIZED, "Unauthorized"
-                ),
+            AuthJWT,
+            "jwt_required",
+            side_effect=JWTDecodeError(
+                status.HTTP_401_UNAUTHORIZED, "Unauthorized"
+            ),
         ):
             for url in delete_endpoints:
                 response = client.delete(url)
@@ -527,11 +528,11 @@ class TestAuthenticationAndAuthorization:
         }
 
         with patch.object(
-                AuthJWT,
-                "jwt_required",
-                side_effect=JWTDecodeError(
-                    status.HTTP_401_UNAUTHORIZED, "Unauthorized"
-                ),
+            AuthJWT,
+            "jwt_required",
+            side_effect=JWTDecodeError(
+                status.HTTP_401_UNAUTHORIZED, "Unauthorized"
+            ),
         ):
             response = client.post(BASE_URL, json=valid_body)
             assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -547,11 +548,11 @@ class TestAuthenticationAndAuthorization:
         invalid_body = {}  # Missing required fields
 
         with patch.object(
-                AuthJWT,
-                "jwt_required",
-                side_effect=JWTDecodeError(
-                    status.HTTP_401_UNAUTHORIZED, "Unauthorized"
-                ),
+            AuthJWT,
+            "jwt_required",
+            side_effect=JWTDecodeError(
+                status.HTTP_401_UNAUTHORIZED, "Unauthorized"
+            ),
         ):
             response = client.post(BASE_URL, json=invalid_body)
             # Expects 422 because validation happens before auth
@@ -586,14 +587,12 @@ class TestIntegrationScenarios:
 
     @patch("src.simulations.routes.v1.routes.get_simulation_configurations")
     def test_filter_and_pagination_combined(
-            self, mock_get_configs, client, mock_config
+        self, mock_get_configs, client, mock_config
     ):
         """Test combining filters with pagination."""
         mock_get_configs.return_value = ([mock_config], 1)
 
-        response = client.get(
-            f"{BASE_URL}?filters=name:Test&page=1&limit=10"
-        )
+        response = client.get(f"{BASE_URL}?filters=name:Test&page=1&limit=10")
 
         assert response.status_code == status.HTTP_200_OK
         call_args = mock_get_configs.call_args[1]
@@ -605,9 +604,7 @@ class TestIntegrationScenarios:
     @patch(
         "src.simulations.routes.v1.routes.get_simulation_configuration_from_db"
     )
-    def test_create_then_retrieve(
-            self, mock_get, mock_create, client
-    ):
+    def test_create_then_retrieve(self, mock_get, mock_create, client):
         """Test creating a simulation and then retrieving it."""
         config_id = uuid.uuid4()
         report_id = uuid.uuid4()
@@ -691,7 +688,7 @@ class TestEdgeCasesAndBoundaries:
         ]
 
         with patch(
-                "src.simulations.routes.v1.routes.create_simulation_configuration"
+            "src.simulations.routes.v1.routes.create_simulation_configuration"
         ) as mock_create:
             mock_create.return_value = (
                 MagicMock(id=uuid.uuid4()),
@@ -732,7 +729,7 @@ class TestEdgeCasesAndBoundaries:
         }
 
         with patch(
-                "src.simulations.routes.v1.routes.create_simulation_configuration"
+            "src.simulations.routes.v1.routes.create_simulation_configuration"
         ) as mock_create:
             mock_create.return_value = (
                 MagicMock(id=uuid.uuid4()),
@@ -755,7 +752,9 @@ class TestEdgeCasesAndBoundaries:
         """Test filters with extra whitespace."""
         mock_get_configs.return_value = ([], 0)
 
-        response = client.get(f"{BASE_URL}?filters=name: Test , description: Desc")
+        response = client.get(
+            f"{BASE_URL}?filters=name: Test , description: Desc"
+        )
         # Should handle gracefully (utils trim whitespace)
         assert response.status_code in (
             status.HTTP_200_OK,
