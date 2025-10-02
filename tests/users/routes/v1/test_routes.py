@@ -105,5 +105,7 @@ def test_delete_current_user_success(client, mocker, mock_auth_dependency):
     response = client.delete(f"{BASE_URL}/me")
     assert response.status_code == 200
     assert response.json() == {"detail": "User deleted"}
-    mock_delete_user.assert_called_once_with(mocker.ANY, user_id=str(TEST_USER_ID))
+    mock_delete_user.assert_called_once_with(
+        mocker.ANY, user_id=str(TEST_USER_ID)
+    )
     mock_auth_dependency.unset_jwt_cookies.assert_called_once()

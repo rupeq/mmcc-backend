@@ -42,7 +42,7 @@ class SimulationConfiguration(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     user: Mapped["User"] = relationship(
-        back_populates="simulation_configurations"
+        "User", back_populates="simulation_configurations"
     )
     reports: Mapped[list["SimulationReport"]] = relationship(
         back_populates="configuration", cascade="all, delete-orphan"

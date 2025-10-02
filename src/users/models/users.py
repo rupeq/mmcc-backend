@@ -32,7 +32,11 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(512))
 
     simulation_configurations: Mapped[list["SimulationConfiguration"]] = (
-        relationship(back_populates="user", cascade="all, delete-orphan")
+        relationship(
+            "SimulationConfiguration",
+            back_populates="user",
+            cascade="all, delete-orphan",
+        )
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
