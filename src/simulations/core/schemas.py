@@ -197,3 +197,53 @@ class SweepResponse(BaseModel):
     """Represent the complete response for a parameter sweep experiment."""
 
     results: list[SweepResultItem]
+
+
+class OptimizationRequest(BaseModel):
+    """Request for channel optimization"""
+
+    base_request: SimulationRequest
+    optimization_type: Literal[
+        "binary_search",
+        "cost_minimization",
+        "gradient_descent",
+        "multi_objective",
+    ] = Field(..., alias="optimizationType")
+
+    # Binary search parameters
+    target_rejection_prob: float | None = Field(
+        None, alias="targetRejectionProb", ge=0, le=1
+    )
+    max_channels: int | None = Field(None, alias="maxChannels", ge=1, le=1000)
+    tolerance: float | None = Field(None, ge=0, le=1)
+
+    # Cost parameters
+    channel_cost: float | None = Field(None, alias="channelCost", ge=0)
+    rejection_penalty: float | None = Field(
+        None, alias="rejectionPenalty", ge=0
+    )
+
+    # Multi-objective weights
+    rejection_weight: float | None = Field(
+        None, alias="rejectionWeight", ge=0, le=1
+    )
+    utilization_weight: float | None = Field(
+        None, alias="utilizationWeight", ge=0, le=1
+    )
+    cost_weight: float | None = Field(None, alias="costWeight", ge=0, le=1)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class OptimizationResultResponse(BaseModel):
+    """Response with optimization results"""
+
+    optimal_channels: int
+    achieved_rejection_prob: float
+    achieved_utilization: float
+    throughput: float
+    total_cost: float | None = None
+    iterations: int
+    convergence_history: list[dict] | None = None
+
+    model_config = ConfigDict(from_attributes=True)
