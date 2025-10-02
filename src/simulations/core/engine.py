@@ -122,32 +122,37 @@ class Simulator:
         self.params = params
         self._validate_parameters()
 
-        # Initialize RNG
         if params.random_seed is not None:
             self.rng = np.random.default_rng(params.random_seed)
         else:
             self.rng = np.random.default_rng()
 
-        # Simulation state
         self.clock = 0.0
         self.event_queue: list[Event] = []
-
-        # Components
         self.channels = ChannelManager(params.num_channels)
-        self.stats = SimulationStatistics()
 
-        # Distributions
+        self.stats = SimulationStatistics()
+        self.stats.configure_limits(
+            max_service_samples=params.max_service_time_samples,
+            max_gantt_items=params.max_gantt_items,
+            collect_service_times=params.collect_service_times,
+            collect_gantt_data=params.collect_gantt_data,
+        )
+
         self.arrival_distribution = self._create_arrival_distribution()
         self.service_distribution = get_distribution(
             params.service_process, rng=self.rng
         )
 
         logger.debug(
-            "Initialized simulator: channels=%d, sim_time=%.2f, arrival=%s, service=%s",
+            "Initialized simulator: channels=%d, sim_time=%.2f, "
+            "collect_gantt=%s (max=%s), collect_service_times=%s (max=%s)",
             params.num_channels,
             params.simulation_time,
-            self.arrival_distribution,
-            self.service_distribution,
+            params.collect_gantt_data,
+            params.max_gantt_items,
+            params.collect_service_times,
+            params.max_service_time_samples,
         )
 
     def _validate_parameters(self) -> None:
@@ -260,37 +265,37 @@ class Simulator:
             self._reject_request()
 
     def _process_request(self, channel_id: int) -> None:
-        """Process an accepted request on the given channel"""
+        """Process an accepted request"""
         self.stats.processed_requests += 1
-
-        # Generate service time
         service_time = self.service_distribution.generate()
+
+        # Record service time (respects limits)
         self.stats.record_service_time(service_time)
 
-        # Calculate departure time
         departure_time = self.clock + service_time
-
-        # Update channel allocation
         self.channels.allocate_channel(channel_id, departure_time)
-
-        # Track busy time for utilization
         self.stats.total_busy_time += service_time
 
-        # Schedule departure event
         self._schedule_event(
             delay=service_time,
             event_type=EventType.DEPARTURE,
             data={"channel_id": channel_id},
         )
 
-        # Record for Gantt chart
-        self.stats.gantt_items.append(
-            GanttChartItem(
-                channel=channel_id,
-                start=self.clock,
-                end=departure_time,
-                duration=service_time,
-            )
+        # Record Gantt item (respects limits)
+        gantt_item = GanttChartItem(
+            channel=channel_id,
+            start=self.clock,
+            end=departure_time,
+            duration=service_time,
+        )
+        self.stats.record_gantt_item(gantt_item)
+
+        logger.debug(
+            "Request accepted: channel=%d, service_time=%.4f, departure=%.4f",
+            channel_id,
+            service_time,
+            departure_time,
         )
 
         logger.debug(
@@ -323,12 +328,11 @@ class Simulator:
         # Channel is automatically freed by time-based logic
 
     def _calculate_results(self) -> SimulationResult:
-        """Calculate final simulation metrics and prepare results"""
+        """Calculate final simulation results"""
         total_time = self.params.simulation_time
         channel_stats = self.channels.get_utilization_stats(total_time)
         total_channel_time = channel_stats["total_channel_time"]
 
-        # Calculate metrics
         metrics = SimulationMetrics(
             total_requests=self.stats.total_requests,
             processed_requests=self.stats.processed_requests,
@@ -346,6 +350,24 @@ class Simulator:
             throughput=self.stats.processed_requests / total_time,
         )
 
+        # Log collection info
+        collection_info = self.stats.get_collection_info()
+        logger.debug("Data collection summary: %s", collection_info)
+
+        if self.stats.is_service_times_truncated:
+            logger.info(
+                "Service time data was truncated at %d samples "
+                "(total processed: %d)",
+                collection_info["service_times_limit"],
+                collection_info["total_service_time_count"],
+            )
+
+        if self.stats.is_gantt_truncated:
+            logger.info(
+                "Gantt chart data was truncated at %d items",
+                collection_info["gantt_items_limit"],
+            )
+
         logger.debug(
             "Final metrics: requests=%d, processed=%d, rejected=%d, "
             "rejection_prob=%.4f, utilization=%.4f",
@@ -359,7 +381,9 @@ class Simulator:
         return SimulationResult(
             metrics=metrics,
             gantt_chart=self.stats.gantt_items,
-            raw_service_times=self.stats.service_times,
+            raw_service_times=self.stats.service_times
+            if self.params.collect_service_times
+            else None,
         )
 
 
