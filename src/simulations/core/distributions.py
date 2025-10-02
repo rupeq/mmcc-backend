@@ -1,3 +1,9 @@
+"""Distribution generators for discrete event simulation.
+
+This module provides factory functions to generate random variates from various
+probability distributions for use in queueing simulations.
+"""
+
 import numpy as np
 from typing import Callable
 from scipy.stats import truncnorm
@@ -7,16 +13,22 @@ from src.simulations.core.schemas import DistributionParams
 
 
 def get_generator(params: DistributionParams) -> Callable[[], float]:
-    """Get a random number generator function based on the provided distribution parameters.
+    """Create a random variate generator based on distribution parameters.
 
     Args:
-        params: The parameters defining the distribution.
+        params: Distribution parameters including type and shape parameters.
 
     Returns:
-        A callable that generates a random number from the specified distribution.
+        A callable that generates random variates from the specified distribution.
 
     Raises:
-        NotImplementedError: If the specified distribution type is not supported.
+        NotImplementedError: If the distribution type is not supported.
+
+    Example:
+        >>> from src.simulations.core.schemas import ExponentialParams
+        >>> params = ExponentialParams(rate=2.0)
+        >>> generator = get_generator(params)
+        >>> sample = generator()  # Returns a random exponential variate
     """
     if params.distribution == DistributionType.EXPONENTIAL:
         # np.random.exponential expects scale = 1/lambda
