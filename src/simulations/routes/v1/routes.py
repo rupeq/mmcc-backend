@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from src.simulations.core.engine import run_replications
 from src.simulations.core.schemas import (
     OptimizationResultResponse,
     OptimizationRequest,
@@ -620,4 +621,155 @@ async def optimize_channels(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Optimization failed. Please check your parameters and try again.",
+        )
+
+
+@router.post(
+    "/compare-theory",
+    status_code=status.HTTP_200_OK,
+    summary="Compare simulation with theoretical predictions",
+    description="""
+    Run simulation and compare results with theoretical predictions (when available).
+
+    Currently supports:
+    - **M/M/c/c systems**: Exponential arrivals and service (Erlang B formula)
+
+    Returns simulation results alongside theoretical predictions with error analysis.
+    """,
+)
+async def compare_with_theory(
+    request: CreateSimulationRequest,
+    authorize: AuthJWT = Depends(),
+):
+    """Compare simulation results with theoretical predictions.
+
+    This endpoint:
+    1. Runs the simulation (in-process for immediate results)
+    2. Calculates theoretical metrics (if system is M/M/c/c)
+    3. Compares simulation vs theory
+    4. Returns detailed comparison with error analysis
+
+    **Supported Systems:**
+    - M/M/c/c: Exponential inter-arrival and service times
+
+    **Unsupported Systems:**
+    - Non-exponential distributions
+    - Non-stationary arrivals
+    - G/G/c/c systems (no closed-form solution)
+
+    Args:
+        request: Simulation configuration.
+        authorize: JWT authentication dependency.
+
+    Returns:
+        Dictionary containing:
+            - simulation_results: Aggregated simulation metrics
+            - theoretical_results: Theoretical predictions
+            - comparison: Detailed error analysis
+
+    Raises:
+        HTTPException 401: If authentication fails.
+        HTTPException 429: If rate limit exceeded.
+        HTTPException 422: If parameters are invalid.
+
+    Example:
+        ```json
+        {
+          "name": "M/M/3/3 Validation",
+          "simulationParameters": {
+            "numChannels": 3,
+            "simulationTime": 1000,
+            "numReplications": 30,
+            "arrivalProcess": {"distribution": "exponential", "rate": 5.0},
+            "serviceProcess": {"distribution": "exponential", "rate": 10.0},
+            "randomSeed": 42
+          }
+        }
+        ```
+    """
+    authorize.jwt_required()
+
+    check_rate_limit(
+        user_id=authorize.get_jwt_subject(),
+        max_per_hour=20,
+        window_seconds=3600,
+        fail_open=True,
+    )
+
+    logger.info(
+        "Theoretical comparison request: user=%s, channels=%d",
+        authorize.get_jwt_subject(),
+        request.simulation_parameters.num_channels,
+    )
+
+    try:
+        from src.simulations.core.theoretical import (
+            calculate_theoretical_metrics,
+            compare_with_theory as compare_metrics,
+        )
+
+        theoretical_metrics = calculate_theoretical_metrics(
+            request.simulation_parameters
+        )
+
+        simulation_response = run_replications(request.simulation_parameters)
+
+        agg = simulation_response.aggregated_metrics
+        sim_metrics_dict = {
+            "rejection_probability": agg.rejection_probability,
+            "avg_channel_utilization": agg.avg_channel_utilization,
+            "throughput": agg.throughput,
+            "total_requests": agg.total_requests,
+            "processed_requests": agg.processed_requests,
+            "rejected_requests": agg.rejected_requests,
+        }
+
+        if agg.rejection_probability_ci:
+            sim_metrics_dict["rejection_probability_ci"] = {
+                "lower_bound": agg.rejection_probability_ci.lower_bound,
+                "upper_bound": agg.rejection_probability_ci.upper_bound,
+            }
+
+        if agg.avg_channel_utilization_ci:
+            sim_metrics_dict["avg_channel_utilization_ci"] = {
+                "lower_bound": agg.avg_channel_utilization_ci.lower_bound,
+                "upper_bound": agg.avg_channel_utilization_ci.upper_bound,
+            }
+
+        if agg.throughput_ci:
+            sim_metrics_dict["throughput_ci"] = {
+                "lower_bound": agg.throughput_ci.lower_bound,
+                "upper_bound": agg.throughput_ci.upper_bound,
+            }
+
+        comparison = compare_metrics(sim_metrics_dict, theoretical_metrics)
+
+        logger.info(
+            "Comparison complete: system=%s, applicable=%s",
+            theoretical_metrics.system_type,
+            theoretical_metrics.is_applicable,
+        )
+
+        return {
+            "simulation_results": simulation_response,
+            "theoretical_results": {
+                "applicable": theoretical_metrics.is_applicable,
+                "system_type": theoretical_metrics.system_type,
+                "traffic_intensity": theoretical_metrics.traffic_intensity,
+                "blocking_probability": theoretical_metrics.blocking_probability,
+                "utilization": theoretical_metrics.utilization,
+                "throughput": theoretical_metrics.throughput,
+                "mean_service_time": theoretical_metrics.mean_service_time,
+                "mean_interarrival_time": theoretical_metrics.mean_interarrival_time,
+                "assumptions": theoretical_metrics.assumptions,
+                "warnings": theoretical_metrics.warnings,
+            },
+            "comparison": comparison,
+        }
+
+    except Exception as e:
+        logger.exception("Theoretical comparison failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Comparison failed: {str(e)}",
         )
