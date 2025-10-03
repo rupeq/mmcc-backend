@@ -12,7 +12,9 @@ from another_fastapi_jwt_auth import AuthJWT
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
+from celery.result import AsyncResult
 
+from src.simulations.worker import celery_app
 from src.simulations.core.engine import run_replications
 from src.simulations.core.schemas import (
     OptimizationResultResponse,
@@ -40,6 +42,7 @@ from src.simulations.routes.v1.schemas import (
     GetSimulationConfigurationResponse,
     GetSimulationConfigurationReportsResponse,
     GetSimulationConfigurationReportResponse,
+    GetTaskStatusResponse,
 )
 from src.simulations.db_utils.simulation_configurations import (
     get_simulation_configurations,
@@ -62,6 +65,7 @@ from src.simulations.routes.v1.utils import (
     _optimize_cost_minimization,
     _optimize_gradient_descent,
     _optimize_multi_objective,
+    _get_status_message,
 )
 
 router = APIRouter(tags=["v1", "simulations"], prefix="/v1/simulations")
@@ -245,6 +249,7 @@ async def create_simulation(
     return CreateSimulationResponse(
         simulation_configuration_id=configuration.id,
         simulation_report_id=report.id,
+        task_id=task.id,
     )
 
 
@@ -772,4 +777,143 @@ async def compare_with_theory(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Comparison failed: {str(e)}",
+        )
+
+
+@router.get(
+    "/tasks/{task_id}/status",
+    response_model=GetTaskStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get task execution status",
+    description="""
+    Check the status of a background simulation task.
+
+    **Task States:**
+    - **PENDING**: Task is waiting to be executed
+    - **STARTED**: Task is currently running
+    - **SUCCESS**: Task completed successfully
+    - **FAILURE**: Task failed with an error
+    - **RETRY**: Task is being retried after a failure
+    - **REVOKED**: Task was cancelled
+
+    Returns detailed status including progress information and results.
+    """,
+)
+async def get_task_status(
+    task_id: str,
+    authorize: AuthJWT = Depends(),
+):
+    """Get the status of a background simulation task.
+
+    This endpoint queries the Celery result backend to check the current
+    state of a task. It provides real-time status updates for long-running
+    simulations.
+
+    **Use Case:**
+    After creating a simulation (POST /simulations), use the returned task_id
+    to poll this endpoint and check when the simulation completes.
+
+    Args:
+        task_id: The Celery task identifier returned from create_simulation.
+        authorize: JWT authentication dependency.
+
+    Returns:
+        GetTaskStatusResponse containing:
+            - task_id: The task identifier
+            - state: Current Celery state (PENDING, STARTED, SUCCESS, FAILURE)
+            - status: Human-readable status message
+            - result: Task result if completed (simulation metrics summary)
+            - progress: Progress information if task is running
+            - error: Error message if task failed
+
+    Raises:
+        HTTPException 401: If authentication fails.
+        HTTPException 404: If task not found.
+
+    Example:
+        ```
+        GET /api/v1/simulations/tasks/abc123-def456/status
+
+        Response:
+        {
+          "task_id": "abc123-def456",
+          "state": "STARTED",
+          "status": "Simulation in progress",
+          "progress": {
+            "current": 50,
+            "total": 100
+          }
+        }
+        ```
+    """
+    authorize.jwt_required()
+    user_id = authorize.get_jwt_subject()
+
+    logger.debug(
+        "Task status request: task_id=%s, user=%s",
+        task_id,
+        user_id,
+    )
+
+    try:
+        result = AsyncResult(task_id, app=celery_app)
+
+        state = result.state
+        status_msg = _get_status_message(state)
+
+        response = GetTaskStatusResponse(
+            task_id=task_id,
+            state=state,
+            status=status_msg,
+        )
+
+        if state == "PENDING":
+            response.status = "Task is queued or does not exist"
+
+        elif state == "STARTED":
+            response.status = "Simulation is running"
+            if result.info:
+                response.progress = result.info
+
+        elif state == "SUCCESS":
+            response.status = "Simulation completed successfully"
+            response.result = result.result if result.result else None
+
+        elif state == "FAILURE":
+            response.status = "Simulation failed"
+            response.error = (
+                str(result.info) if result.info else "Unknown error"
+            )
+            logger.warning(
+                "Task %s failed: %s",
+                task_id,
+                response.error,
+            )
+
+        elif state == "RETRY":
+            response.status = "Simulation is being retried after an error"
+            if result.info:
+                response.error = str(result.info.get("exc", "Unknown error"))
+
+        elif state == "REVOKED":
+            response.status = "Simulation was cancelled"
+
+        logger.debug(
+            "Task status retrieved: task_id=%s, state=%s",
+            task_id,
+            state,
+        )
+
+        return response
+
+    except Exception as e:
+        logger.error(
+            "Failed to get task status for task_id=%s: %s",
+            task_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve task status: {str(e)}",
         )

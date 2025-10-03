@@ -102,7 +102,7 @@ class TestArrivalScheduleValidation:
         error_msg = str(exc_info.value).lower()
         # Pydantic field validation error
         assert "duration" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_arrival_schedule_zero_duration(self):
         """Test that zero duration raises error"""
@@ -121,7 +121,7 @@ class TestArrivalScheduleValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "duration" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_arrival_schedule_negative_rate(self):
         """Test that negative rate raises error"""
@@ -139,7 +139,7 @@ class TestArrivalScheduleValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "rate" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_arrival_schedule_zero_rate(self):
         """Test that zero rate raises error"""
@@ -156,7 +156,7 @@ class TestArrivalScheduleValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "rate" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_arrival_schedule_single_interval(self):
         """Test arrival schedule with single interval"""
@@ -195,7 +195,6 @@ class TestArrivalScheduleValidation:
     def test_arrival_schedule_very_large_warns(self, caplog):
         """Test that very large schedule (>1000 intervals) triggers warning"""
         import logging
-
         caplog.set_level(logging.WARNING)
 
         # Create 1001 intervals
@@ -282,7 +281,7 @@ class TestArrivalScheduleValidation:
         # Should catch the first error (negative duration)
         error_msg = str(exc_info.value).lower()
         assert "duration" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_arrival_schedule_boundary_rates(self):
         """Test arrival schedule with very small and very large rates"""
@@ -353,7 +352,7 @@ class TestArrivalScheduleItemValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "duration" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_schedule_item_negative_rate_field_validation(self):
         """Test that negative rate fails at field level"""
@@ -363,7 +362,7 @@ class TestArrivalScheduleItemValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "rate" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_schedule_item_zero_duration_field_validation(self):
         """Test that zero duration fails at field level"""
@@ -372,7 +371,7 @@ class TestArrivalScheduleItemValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "duration" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_schedule_item_zero_rate_field_validation(self):
         """Test that zero rate fails at field level"""
@@ -381,7 +380,7 @@ class TestArrivalScheduleItemValidation:
 
         error_msg = str(exc_info.value).lower()
         assert "rate" in error_msg
-        assert "greater than 0" in error_msg or "greater_than" in error_msg
+        assert ("greater than 0" in error_msg or "greater_than" in error_msg)
 
     def test_schedule_item_extreme_values(self):
         """Test schedule item with extreme but valid values"""
@@ -401,10 +400,7 @@ def test_mm_c_c_matches_erlang_b():
     """Validate simulator against theoretical results"""
     import math
     from src.simulations.core.engine import run_replications
-    from src.simulations.core.schemas import (
-        ExponentialParams,
-        SimulationRequest,
-    )
+    from src.simulations.core.schemas import ExponentialParams, SimulationRequest
 
     lambda_rate = 5.0
     mu_rate = 10.0
@@ -437,6 +433,6 @@ def test_mm_c_c_matches_erlang_b():
     )
 
     relative_error = (
-        abs(simulated_blocking - theoretical_blocking) / theoretical_blocking
+            abs(simulated_blocking - theoretical_blocking) / theoretical_blocking
     )
     assert relative_error < 0.05, f"Relative error {relative_error:.2%} > 5%"

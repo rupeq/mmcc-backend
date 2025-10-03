@@ -94,7 +94,6 @@ class CreateSimulationRequest(BaseModel):
 
 class CreateSimulationResponse(BaseModel):
     """Represent the response body after successfully creating a simulation.
-
     Attributes:
         simulation_configuration_id: The unique identifier for the
                                      newly created simulation
@@ -102,10 +101,12 @@ class CreateSimulationResponse(BaseModel):
         simulation_report_id: The unique identifier for the
                               initial simulation report generated
                               for this configuration.
+        task_id: The Celery task ID for tracking execution status.
     """
 
     simulation_configuration_id: uuid.UUID
     simulation_report_id: uuid.UUID
+    task_id: str
 
 
 class GetSimulationConfigurationResponse(SimulationConfigurationInfo):
@@ -124,3 +125,23 @@ class GetSimulationConfigurationReportResponse(SimulationReport):
     """Represent the response for getting a single report."""
 
     pass
+
+
+class GetTaskStatusResponse(BaseModel):
+    """Represent the status of a background task.
+
+    Attributes:
+        task_id: The Celery task identifier.
+        state: Task state (PENDING, STARTED, SUCCESS, FAILURE, RETRY, REVOKED).
+        status: Human-readable status description.
+        result: Task result if completed (report_id or error).
+        progress: Optional progress information.
+        error: Error message if task failed.
+    """
+
+    task_id: str
+    state: str
+    status: str
+    result: dict | None = None
+    progress: dict | None = None
+    error: str | None = None
