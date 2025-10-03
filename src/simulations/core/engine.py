@@ -144,6 +144,9 @@ class Simulator:
             params.service_process, rng=self.rng
         )
 
+        self._events_processed = 0
+        self._max_queue_size = 0
+
         logger.debug(
             "Initialized simulator: channels=%d, sim_time=%.2f, "
             "collect_gantt=%s (max=%s), collect_service_times=%s (max=%s)",
@@ -206,7 +209,11 @@ class Simulator:
 
         events_processed = 0
         while self.event_queue and self.clock < self.params.simulation_time:
+            self._max_queue_size = max(
+                self._max_queue_size, len(self.event_queue)
+            )
             event = heapq.heappop(self.event_queue)
+            self._events_processed += 1
             self.clock = event.time
 
             if self.clock > self.params.simulation_time:
@@ -224,7 +231,11 @@ class Simulator:
             events_processed,
             self.clock,
         )
-
+        logger.info(
+            "Simulation metrics: events=%d, max_queue=%d",
+            self._events_processed,
+            self._max_queue_size,
+        )
         return self._calculate_results()
 
     def _schedule_event(

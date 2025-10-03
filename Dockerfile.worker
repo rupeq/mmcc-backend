@@ -1,0 +1,15 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+COPY pyproject.toml .
+RUN pip install --no-cache-dir -e .
+
+COPY src ./src
+
+RUN mkdir -p /app/logs
+
+RUN useradd -m -u 1000 celery && chown -R celery:celery /app
+USER celery
+
+CMD ["celery", "-A", "src.simulations.worker.celery_app", "worker", "--loglevel=info"]

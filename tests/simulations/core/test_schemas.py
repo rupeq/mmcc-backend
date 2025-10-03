@@ -90,6 +90,7 @@ class TestDataCollectionConfiguration:
     def test_high_limit_warning(self, caplog):
         """Test warning for very high limits"""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         request = SimulationRequest(

@@ -150,15 +150,30 @@ class SimulationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_arrival_schedule(self):
-        if self.arrival_schedule:
-            total_duration = sum(
-                item.duration for item in self.arrival_schedule
+        if not self.arrival_schedule:
+            return self
+
+        total_duration = sum(item.duration for item in self.arrival_schedule)
+        if total_duration < self.simulation_time:
+            raise ValueError(
+                f"Arrival schedule duration ({total_duration:.2f}s) is less than "
+                f"simulation time ({self.simulation_time:.2f}s)"
             )
-            if total_duration < self.simulation_time:
-                raise ValueError(
-                    f"Arrival schedule duration ({total_duration}) is less than "
-                    f"simulation time ({self.simulation_time})"
-                )
+
+        for i, item in enumerate(self.arrival_schedule):
+            if item.duration <= 0:
+                raise ValueError(f"Schedule item {i} has non-positive duration")
+            if item.rate <= 0:
+                raise ValueError(f"Schedule item {i} has non-positive rate")
+
+        if len(self.arrival_schedule) > 1000:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Very large arrival schedule (%d intervals) may impact performance",
+                len(self.arrival_schedule),
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -286,3 +301,30 @@ class OptimizationResultResponse(BaseModel):
     convergence_history: list[dict] | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    def plot_convergence(self) -> str:
+        """Generate base64-encoded convergence plot for frontend"""
+        if not self.convergence_history:
+            return None
+
+        import matplotlib.pyplot as plt
+        import io
+        import base64
+
+        iterations = [h["iteration"] for h in self.convergence_history]
+        values = [h["objective_value"] for h in self.convergence_history]
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(iterations, values, marker="o")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Objective Function Value")
+        ax.set_title("Optimization Convergence")
+        ax.grid(True)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", dpi=150)
+        buf.seek(0)
+        plot_base64 = base64.b64encode(buf.read()).decode()
+        plt.close()
+
+        return f"data:image/png;base64,{plot_base64}"

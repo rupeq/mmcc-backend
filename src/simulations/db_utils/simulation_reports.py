@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -167,3 +168,99 @@ async def delete_simulation_configuration_report(
         report_id,
         result.rowcount,
     )
+
+
+async def update_simulation_report_status(
+    session: AsyncSession,
+    *,
+    report_id: uuid.UUID,
+    status: ReportStatus,
+    error_message: str | None = None,
+    completed_at: datetime | None = None,
+) -> None:
+    """Update simulation report status"""
+    logger.debug("Updating report %s to status %s", report_id, status)
+
+    update_values = {"status": status}
+
+    if error_message is not None:
+        update_values["error_message"] = error_message
+
+    if completed_at is not None:
+        update_values["completed_at"] = completed_at
+
+    result = await session.execute(
+        update(SimulationReport)
+        .where(SimulationReport.id == report_id)
+        .values(**update_values)
+    )
+
+    await session.commit()
+
+    if result.rowcount == 0:
+        logger.warning("Report %s not found for status update", report_id)
+        raise SimulationReportNotFound()
+
+    logger.debug(
+        "Successfully updated report %s to status %s",
+        report_id,
+        status,
+    )
+
+
+async def update_simulation_report_results(
+    session: AsyncSession,
+    *,
+    report_id: uuid.UUID,
+    status: ReportStatus,
+    results: dict,
+    completed_at: datetime | None = None,
+) -> None:
+    """Update simulation report with results"""
+    logger.debug("Updating report %s with results", report_id)
+
+    update_values = {
+        "status": status,
+        "results": results,
+    }
+
+    if completed_at is not None:
+        update_values["completed_at"] = completed_at
+
+    result = await session.execute(
+        update(SimulationReport)
+        .where(SimulationReport.id == report_id)
+        .values(**update_values)
+    )
+
+    await session.commit()
+
+    if result.rowcount == 0:
+        logger.warning("Report %s not found for results update", report_id)
+        raise SimulationReportNotFound()
+
+    logger.debug(
+        "Successfully updated report %s with results",
+        report_id,
+    )
+
+
+async def cleanup_stale_pending_reports(
+    session: AsyncSession,
+    *,
+    cutoff: datetime,
+) -> int:
+    result = await session.execute(
+        update(SimulationReport)
+        .where(
+            SimulationReport.status == ReportStatus.PENDING,
+            SimulationReport.created_at < cutoff,
+        )
+        .values(
+            status=ReportStatus.FAILED,
+            error_message="Task timeout or dispatch failure",
+            completed_at=datetime.now(timezone.utc),
+        )
+    )
+    await session.commit()
+    return result.rowcount()

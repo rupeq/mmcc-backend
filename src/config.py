@@ -16,6 +16,7 @@ from src.core.config import (
     get_argon_settings,
     ArgonSettings,
 )
+from src.simulations.config import WorkerSettings, get_worker_settings
 
 
 class ServiceSettings(BaseSettings):
@@ -77,6 +78,7 @@ class Settings(BaseSettings):
         authorization (AuthorizationSettings): Authorization-specific settings.
         logger_settings (LoggerSettings): Logger-specific settings.
         argon_settings (ArgonSettings): Argon2 hashing-specific settings.
+        simulation_worker_settings (WorkerSettings): Simulation worker-specific settings.
     """
 
     service: ServiceSettings = Field(default_factory=get_service_settings)
@@ -85,6 +87,9 @@ class Settings(BaseSettings):
     )
     logger_settings: LoggerSettings = Field(default_factory=get_logger_settings)
     argon_settings: ArgonSettings = Field(default_factory=get_argon_settings)
+    simulation_worker_settings: WorkerSettings = Field(
+        default_factory=get_worker_settings
+    )
 
     def model_post_init(self, context: Any, /) -> None:
         """Load JWT config after the model is initialized."""

@@ -18,5 +18,55 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:8-alpine
+    container_name: dev-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server 
+      --requirepass ${REDIS_PASSWORD:-dev_password}
+      --appendonly yes
+      --appendfsync everysec
+      --dir /data
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-dev_password_change_in_prod}
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: dev-celery-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-dev_password}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-dev_password}@redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-dev_password}@redis:6379/0
+      - DB_URL=${DB_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/mmcc}
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    command: >
+      celery -A src.simulations.worker.celery_app worker
+      --loglevel=info
+      --concurrency=4
+      --max-tasks-per-child=100
+      -Q simulations:10
+      -n simulations_worker@%h
+
 volumes:
   pg_data:
+  redis_data:
