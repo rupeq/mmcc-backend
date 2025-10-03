@@ -655,11 +655,14 @@ class TestIntegrationScenarios:
         assert call_args["page"] == 1
         assert call_args["limit"] == 10
 
+    @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     @patch(
         "src.simulations.routes.v1.routes.get_simulation_configuration_from_db"
     )
-    def test_create_then_retrieve(self, mock_get, mock_create, client):
+    def test_create_then_retrieve(
+        self, mock_get, mock_create, mock_task, client
+    ):
         """Test creating a simulation and then retrieving it."""
         config_id = uuid.uuid4()
         report_id = uuid.uuid4()
@@ -674,6 +677,11 @@ class TestIntegrationScenarios:
 
         mock_create.return_value = (MockConfig(), MockReport())
         mock_get.return_value = MockConfig()
+
+        # ✅ Mock the Celery task
+        mock_task_result = MagicMock()
+        mock_task_result.id = "test-task-id"
+        mock_task.delay.return_value = mock_task_result
 
         # Create
         body = {
@@ -726,7 +734,11 @@ class TestEdgeCasesAndBoundaries:
         data = response.json()
         assert data["items"] == []
 
-    def test_create_simulation_with_all_distributions(self, client):
+    @patch("src.simulations.routes.v1.routes.run_simulation_task")
+    @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
+    def test_create_simulation_with_all_distributions(
+        self, mock_create, mock_task, client
+    ):
         """Test creating simulations with different distributions."""
         distributions = [
             {"distribution": "exponential", "rate": 1.0},
@@ -742,31 +754,39 @@ class TestEdgeCasesAndBoundaries:
             },
         ]
 
-        with patch(
-            "src.simulations.routes.v1.routes.create_simulation_configuration"
-        ) as mock_create:
-            mock_create.return_value = (
-                MagicMock(id=uuid.uuid4()),
-                MagicMock(id=uuid.uuid4()),
+        mock_create.return_value = (
+            MagicMock(id=uuid.uuid4()),
+            MagicMock(id=uuid.uuid4()),
+        )
+
+        mock_task_result = MagicMock()
+        mock_task_result.id = "test-task-id"
+        mock_task.delay.return_value = mock_task_result
+
+        for dist in distributions:
+            body = {
+                "name": f"Test {dist['distribution']}",
+                "simulationParameters": {
+                    "numChannels": 2,
+                    "simulationTime": 100.0,
+                    "numReplications": 1,
+                    "arrivalProcess": dist,
+                    "serviceProcess": dist,
+                },
+            }
+            response = client.post(BASE_URL, json=body)
+            assert response.status_code == status.HTTP_202_ACCEPTED, (
+                f"Failed for distribution: {dist['distribution']}"
             )
 
-            for dist in distributions:
-                body = {
-                    "name": f"Test {dist['distribution']}",
-                    "simulationParameters": {
-                        "numChannels": 2,
-                        "simulationTime": 100.0,
-                        "numReplications": 1,
-                        "arrivalProcess": dist,
-                        "serviceProcess": dist,
-                    },
-                }
-                response = client.post(BASE_URL, json=body)
-                assert response.status_code == status.HTTP_202_ACCEPTED, (
-                    f"Failed for distribution: {dist['distribution']}"
-                )
-
-    def test_create_simulation_with_arrival_schedule(self, client):
+    @patch("src.simulations.routes.v1.routes.run_simulation_task")
+    @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
+    def test_create_simulation_with_arrival_schedule(
+        self,
+        mock_create,
+        mock_task,
+        client,
+    ):
         """Test creating simulation with non-stationary arrivals."""
         body = {
             "name": "Non-stationary Test",
@@ -783,16 +803,17 @@ class TestEdgeCasesAndBoundaries:
             },
         }
 
-        with patch(
-            "src.simulations.routes.v1.routes.create_simulation_configuration"
-        ) as mock_create:
-            mock_create.return_value = (
-                MagicMock(id=uuid.uuid4()),
-                MagicMock(id=uuid.uuid4()),
-            )
+        mock_create.return_value = (
+            MagicMock(id=uuid.uuid4()),
+            MagicMock(id=uuid.uuid4()),
+        )
 
-            response = client.post(BASE_URL, json=body)
-            assert response.status_code == status.HTTP_202_ACCEPTED
+        mock_task_result = MagicMock()
+        mock_task_result.id = "test-task-id"
+        mock_task.delay.return_value = mock_task_result
+
+        response = client.post(BASE_URL, json=body)
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
     @patch("src.simulations.routes.v1.routes.get_simulation_configurations")
     def test_empty_filters_string(self, mock_get_configs, client):
