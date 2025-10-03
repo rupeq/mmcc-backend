@@ -1,8 +1,9 @@
-# tests/simulations/worker/test_integration.py
 """Integration tests for end-to-end task flow."""
+
 import uuid
-import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
+
+import pytest
 from fastapi.testclient import TestClient
 
 from src.main import app
@@ -18,7 +19,7 @@ def client():
 @pytest.fixture
 def mock_celery_task():
     """Mock Celery task for integration testing."""
-    with patch("src.simulations.tasks.simulations.run_simulation_task") as mock:
+    with patch("src.simulations.routes.v1.routes.run_simulation_task") as mock:
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"
         mock.delay.return_value = mock_task_result
@@ -30,12 +31,11 @@ class TestEndToEndTaskFlow:
 
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     def test_api_dispatches_task_successfully(
-            self, mock_create, mock_celery_task, client
+        self, mock_create, mock_celery_task, client
     ):
         """Test that API successfully dispatches task to Celery."""
         from another_fastapi_jwt_auth import AuthJWT
 
-        # Mock authentication
         mock_auth = MagicMock()
         mock_auth.get_jwt_subject.return_value = str(uuid.uuid4())
         app.dependency_overrides[AuthJWT] = lambda: mock_auth
@@ -72,14 +72,13 @@ class TestEndToEndTaskFlow:
         assert response.status_code == 202
         assert mock_celery_task.delay.called
 
-        # Clean up
         app.dependency_overrides = {}
 
     @pytest.mark.asyncio
     @patch("src.simulations.tasks.simulations.run_replications")
     @patch("src.simulations.tasks.simulations.update_simulation_report_results")
     async def test_task_updates_database_on_completion(
-            self, mock_update, mock_run
+        self, mock_update, mock_run
     ):
         """Test that task updates database with results."""
         from src.simulations.tasks.simulations import SimulationTask
@@ -110,8 +109,8 @@ class TestEndToEndTaskFlow:
         mock_factory.return_value.__aexit__.return_value = None
 
         with patch(
-                "src.simulations.tasks.simulations.get_worker_session_factory",
-                return_value=mock_factory,
+            "src.simulations.tasks.simulations.get_worker_session_factory",
+            return_value=mock_factory,
         ):
             task = SimulationTask()
             result = await task.execute_simulation(report_id, params)
@@ -145,11 +144,14 @@ class TestConcurrentTaskExecution:
             tasks.append((report_id, params))
 
         # Execute concurrently (mocked)
-        with patch(
+        with (
+            patch(
                 "src.simulations.tasks.simulations.run_replications"
-        ) as mock_run, patch(
-            "src.simulations.tasks.simulations.get_worker_session_factory"
-        ) as mock_factory:
+            ) as mock_run,
+            patch(
+                "src.simulations.tasks.simulations.get_worker_session_factory"
+            ) as mock_factory,
+        ):
             mock_response = MagicMock()
             mock_response.aggregated_metrics.total_requests = 50
             mock_response.aggregated_metrics.processed_requests = 40
@@ -160,7 +162,9 @@ class TestConcurrentTaskExecution:
             mock_run.return_value = mock_response
 
             mock_session = AsyncMock()
-            mock_factory.return_value.return_value.__aenter__.return_value = mock_session
+            mock_factory.return_value.return_value.__aenter__.return_value = (
+                mock_session
+            )
             mock_factory.return_value.return_value.__aexit__.return_value = None
 
             task_obj = SimulationTask()
@@ -207,14 +211,19 @@ class TestTaskErrorRecovery:
             mock_response.model_dump.return_value = {}
             return mock_response
 
-        with patch(
+        with (
+            patch(
                 "src.simulations.tasks.simulations.run_replications",
                 side_effect=side_effect,
-        ), patch(
-            "src.simulations.tasks.simulations.get_worker_session_factory"
-        ) as mock_factory:
+            ),
+            patch(
+                "src.simulations.tasks.simulations.get_worker_session_factory"
+            ) as mock_factory,
+        ):
             mock_session = AsyncMock()
-            mock_factory.return_value.return_value.__aenter__.return_value = mock_session
+            mock_factory.return_value.return_value.__aenter__.return_value = (
+                mock_session
+            )
             mock_factory.return_value.return_value.__aexit__.return_value = None
 
             task = SimulationTask()

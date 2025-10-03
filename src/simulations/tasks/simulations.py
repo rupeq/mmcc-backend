@@ -305,7 +305,9 @@ def run_simulation_task(
         import asyncio
 
         result = asyncio.run(
-            SimulationTask.execute_simulation(self, report_id, simulation_params)
+            SimulationTask.execute_simulation(
+                self, report_id, simulation_params
+            )
         )
 
         logger.info(

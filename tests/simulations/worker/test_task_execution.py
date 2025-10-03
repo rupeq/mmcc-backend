@@ -1,8 +1,9 @@
-# tests/simulations/worker/test_task_execution.py (FIXED)
 """Comprehensive tests for simulation task execution."""
+
 import uuid
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.simulations.tasks.simulations import (
     run_simulation_task,
@@ -87,7 +88,7 @@ class TestSimulationTaskExecution:
 
     @pytest.mark.asyncio
     async def test_successful_simulation_execution(
-            self, valid_simulation_params, mock_session_factory
+        self, valid_simulation_params, mock_session_factory
     ):
         """Test successful simulation execution and result storage."""
         mock_factory, mock_session = mock_session_factory
@@ -95,14 +96,18 @@ class TestSimulationTaskExecution:
 
         task = SimulationTask()
 
-        with patch(
+        with (
+            patch(
                 "src.simulations.tasks.simulations.get_worker_session_factory",
                 return_value=mock_factory,
-        ), patch(
-            "src.simulations.tasks.simulations.run_replications"
-        ) as mock_run, patch(
-            "src.simulations.tasks.simulations.update_simulation_report_results"
-        ) as mock_update:
+            ),
+            patch(
+                "src.simulations.tasks.simulations.run_replications"
+            ) as mock_run,
+            patch(
+                "src.simulations.tasks.simulations.update_simulation_report_results"
+            ) as mock_update,
+        ):
             # Mock successful simulation
             mock_response = MagicMock()
             mock_response.aggregated_metrics.total_requests = 100
@@ -134,9 +139,7 @@ class TestSimulationTaskExecution:
             assert result["rejected_requests"] == 20
 
     @pytest.mark.asyncio
-    async def test_validation_error_handling(
-            self, mock_session_factory
-    ):
+    async def test_validation_error_handling(self, mock_session_factory):
         """Test handling of invalid simulation parameters."""
         mock_factory, mock_session = mock_session_factory
         report_id = str(uuid.uuid4())
@@ -147,15 +150,16 @@ class TestSimulationTaskExecution:
 
         task = SimulationTask()
 
-        with patch(
+        with (
+            patch(
                 "src.simulations.tasks.simulations.get_worker_session_factory",
                 return_value=mock_factory,
-        ), patch(
-            "src.simulations.tasks.simulations.update_simulation_report_status"
-        ) as mock_update:
-            result = await task.execute_simulation(
-                report_id, invalid_params
-            )
+            ),
+            patch(
+                "src.simulations.tasks.simulations.update_simulation_report_status"
+            ) as mock_update,
+        ):
+            result = await task.execute_simulation(report_id, invalid_params)
 
             # Should mark as FAILED
             mock_update.assert_called_once()
@@ -174,6 +178,7 @@ class TestRunSimulationTask:
     def test_task_is_registered(self):
         """Test that task is properly registered with Celery."""
         from src.simulations.worker import celery_app
+
         assert "simulations.run_simulation" in celery_app.tasks
 
     def test_task_configuration(self):
@@ -199,9 +204,9 @@ class TestTaskRetryLogic:
         """Test that task has correct retry configuration."""
         task = run_simulation_task
 
-        assert hasattr(task, 'max_retries')
+        assert hasattr(task, "max_retries")
         assert task.max_retries == 3
-        assert hasattr(task, 'autoretry_for')
+        assert hasattr(task, "autoretry_for")
         assert ConnectionError in task.autoretry_for
         assert TimeoutError in task.autoretry_for
 
@@ -209,10 +214,13 @@ class TestTaskRetryLogic:
 class TestTaskLogging:
     """Test task logging behavior."""
 
-    @patch("src.simulations.tasks.simulations.SimulationTask.execute_simulation")
+    @patch(
+        "src.simulations.tasks.simulations.SimulationTask.execute_simulation"
+    )
     def test_logs_task_start(self, mock_execute, caplog):
         """Test that task logs start event."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         mock_execute.return_value = {
@@ -233,10 +241,13 @@ class TestTaskLogging:
             for record in caplog.records
         )
 
-    @patch("src.simulations.tasks.simulations.SimulationTask.execute_simulation")
+    @patch(
+        "src.simulations.tasks.simulations.SimulationTask.execute_simulation"
+    )
     def test_logs_task_completion(self, mock_execute, caplog):
         """Test that task logs completion event."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         mock_execute.return_value = {
@@ -264,4 +275,5 @@ class TestDeadLetterQueue:
     def test_dlq_task_exists(self):
         """Test that DLQ task module exists."""
         from src.simulations.tasks import dlq
-        assert hasattr(dlq, 'dead_letter_handler')
+
+        assert hasattr(dlq, "dead_letter_handler")

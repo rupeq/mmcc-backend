@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from src.simulations.tasks.simulations import run_simulation_task
 from src.core.db_session import get_session
 from src.simulations.db_utils.exceptions import (
     IdColumnRequiredException,
@@ -192,8 +193,6 @@ async def create_simulation(
     )
 
     try:
-        from src.simulations.tasks.simulations import run_simulation_task
-
         task = run_simulation_task.delay(
             report_id=str(report.id),
             simulation_params=request.simulation_parameters.model_dump(

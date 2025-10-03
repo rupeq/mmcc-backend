@@ -1,7 +1,8 @@
-# tests/simulations/worker/test_rate_limiter.py
 """Tests for rate limiting functionality."""
-import pytest
+
 from unittest.mock import patch
+
+import pytest
 from fastapi import HTTPException
 from redis.exceptions import RedisError
 
@@ -20,7 +21,9 @@ class TestRateLimitEnforcement:
         # Should not raise
         check_rate_limit(user_id="user123", max_per_hour=10)
 
-        mock_redis.incr.assert_called_once_with("rate_limit:simulations:user123")
+        mock_redis.incr.assert_called_once_with(
+            "rate_limit:simulations:user123"
+        )
 
     @patch("src.simulations.routes.v1.rate_limiter.redis_client")
     def test_blocks_requests_over_limit(self, mock_redis):
@@ -41,7 +44,9 @@ class TestRateLimitEnforcement:
         mock_redis.incr.return_value = 1  # First request
         mock_redis.expire.return_value = True
 
-        check_rate_limit(user_id="user123", max_per_hour=10, window_seconds=3600)
+        check_rate_limit(
+            user_id="user123", max_per_hour=10, window_seconds=3600
+        )
 
         mock_redis.expire.assert_called_once_with(
             "rate_limit:simulations:user123", 3600
@@ -113,6 +118,7 @@ class TestRateLimitLogging:
     def test_logs_rate_limit_exceeded(self, mock_redis, caplog):
         """Test that rate limit exceeded events are logged."""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         mock_redis.incr.return_value = 11
@@ -124,20 +130,18 @@ class TestRateLimitLogging:
             pass
 
         assert any(
-            "Rate limit exceeded" in record.message
-            for record in caplog.records
+            "Rate limit exceeded" in record.message for record in caplog.records
         )
 
     @patch("src.simulations.routes.v1.rate_limiter.redis_client")
     def test_logs_redis_errors(self, mock_redis, caplog):
         """Test that Redis errors are logged."""
         import logging
+
         caplog.set_level(logging.ERROR)
 
         mock_redis.incr.side_effect = RedisError("Connection timeout")
 
         check_rate_limit(user_id="user123", fail_open=True)
 
-        assert any(
-            "Redis error" in record.message for record in caplog.records
-        )
+        assert any("Redis error" in record.message for record in caplog.records)

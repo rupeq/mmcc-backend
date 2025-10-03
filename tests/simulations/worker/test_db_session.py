@@ -1,7 +1,8 @@
-# tests/simulations/worker/test_db_session.py (FIXED)
 """Tests for worker database session management."""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -22,6 +23,7 @@ class TestWorkerEngineCreation:
         """Test that engine is created as singleton."""
         # Reset global state
         import src.simulations.tasks.db_session as db_module
+
         db_module._engine = None
 
         engine1 = get_worker_engine()
@@ -33,17 +35,19 @@ class TestWorkerEngineCreation:
     def test_configures_connection_pool(self):
         """Test connection pool configuration."""
         import src.simulations.tasks.db_session as db_module
+
         db_module._engine = None
 
         engine = get_worker_engine()
 
         # Verify engine was created with pool
-        assert hasattr(engine, 'pool')
+        assert hasattr(engine, "pool")
         assert engine.pool.size() > 0
 
     def test_enables_pool_pre_ping(self):
         """Test that pool pre-ping is enabled."""
         import src.simulations.tasks.db_session as db_module
+
         db_module._engine = None
 
         engine = get_worker_engine()
@@ -58,6 +62,7 @@ class TestSessionFactory:
     def test_creates_session_factory(self):
         """Test session factory creation."""
         import src.simulations.tasks.db_session as db_module
+
         db_module._session_factory = None
 
         factory = get_worker_session_factory()
@@ -149,8 +154,8 @@ class TestSessionContextManager:
         mock_factory.return_value.__aexit__.return_value = None
 
         with patch(
-                "src.simulations.tasks.db_session.get_worker_session_factory",
-                return_value=mock_factory,
+            "src.simulations.tasks.db_session.get_worker_session_factory",
+            return_value=mock_factory,
         ):
             with pytest.raises(SQLAlchemyError):
                 async with get_worker_session() as session:
@@ -173,13 +178,18 @@ class TestDatabaseHealthCheck:
         mock_engine.pool.checkedout.return_value = 2
         mock_engine.pool.overflow.return_value = 0
 
-        with patch(
+        with (
+            patch(
                 "src.simulations.tasks.db_session.get_worker_engine",
                 return_value=mock_engine,
-        ), patch(
-            "src.simulations.tasks.db_session.get_worker_session_factory"
-        ) as mock_factory:
-            mock_factory.return_value.return_value.__aenter__.return_value = mock_session
+            ),
+            patch(
+                "src.simulations.tasks.db_session.get_worker_session_factory"
+            ) as mock_factory,
+        ):
+            mock_factory.return_value.return_value.__aenter__.return_value = (
+                mock_session
+            )
             mock_factory.return_value.return_value.__aexit__.return_value = None
 
             health = await check_database_health()
@@ -193,8 +203,8 @@ class TestDatabaseHealthCheck:
     async def test_unhealthy_database(self):
         """Test health check with unhealthy database."""
         with patch(
-                "src.simulations.tasks.db_session.get_worker_engine",
-                side_effect=Exception("Connection failed"),
+            "src.simulations.tasks.db_session.get_worker_engine",
+            side_effect=Exception("Connection failed"),
         ):
             health = await check_database_health()
 
@@ -209,12 +219,13 @@ class TestConnectionPooling:
     def test_pool_configured_correctly(self):
         """Test that connection pool is configured."""
         import src.simulations.tasks.db_session as db_module
+
         db_module._engine = None
 
         engine = get_worker_engine()
 
         # Verify pool exists and has reasonable settings
-        assert hasattr(engine, 'pool')
+        assert hasattr(engine, "pool")
         pool_size = engine.pool.size()
         assert pool_size > 0
         assert pool_size <= 100  # Reasonable upper bound

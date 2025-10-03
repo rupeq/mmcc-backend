@@ -1,5 +1,5 @@
-# tests/simulations/worker/test_worker_lifecycle.py (FIXED)
 """Comprehensive tests for worker lifecycle management."""
+
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from src.simulations.worker import (
@@ -22,7 +22,7 @@ class TestWorkerStartup:
     @patch("src.simulations.worker.get_worker_engine")
     @patch("src.simulations.worker.get_worker_session_factory")
     def test_initializes_database_on_ready(
-            self, mock_session_factory, mock_engine
+        self, mock_session_factory, mock_engine
     ):
         """Test database initialization on worker ready."""
         mock_engine_instance = MagicMock()
@@ -39,6 +39,7 @@ class TestWorkerStartup:
     def test_logs_worker_configuration(self, mock_engine, caplog):
         """Test that worker configuration is logged on startup."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         mock_engine_instance = MagicMock()
@@ -81,6 +82,7 @@ class TestProcessInitialization:
     def test_logs_process_initialization(self, mock_reset, caplog):
         """Test that process initialization is logged."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         on_worker_process_init()
@@ -133,6 +135,7 @@ class TestTaskEventLogging:
     def test_logs_task_failure(self, caplog):
         """Test that task failures are logged."""
         import logging
+
         caplog.set_level(logging.ERROR)
 
         task = MagicMock()
@@ -147,13 +150,12 @@ class TestTaskEventLogging:
             kwargs={},  # Empty dict instead of None
         )
 
-        assert any(
-            "Task failed" in record.message for record in caplog.records
-        )
+        assert any("Task failed" in record.message for record in caplog.records)
 
     def test_logs_task_success(self, caplog):
         """Test that task successes are logged."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         task = MagicMock()
@@ -175,6 +177,7 @@ class TestTaskEventLogging:
     def test_logs_task_retry(self, caplog):
         """Test that task retries are logged."""
         import logging
+
         caplog.set_level(logging.WARNING)
 
         task = MagicMock()
