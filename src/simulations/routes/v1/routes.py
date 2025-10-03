@@ -893,7 +893,11 @@ async def get_task_status(
         elif state == "RETRY":
             response.status = "Simulation is being retried after an error"
             if result.info:
-                response.error = str(result.info.get("exc", "Unknown error"))
+                response.error = (
+                    str(result.info)
+                    if isinstance(result.info, Exception)
+                    else str(result.info.get("exc", "Unknown error"))
+                )
 
         elif state == "REVOKED":
             response.status = "Simulation was cancelled"

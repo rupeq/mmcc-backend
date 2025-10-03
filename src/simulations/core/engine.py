@@ -1,7 +1,9 @@
 import heapq
 import math
 import logging
+from typing import Callable
 
+from celery import Task
 from scipy import stats as scipy_stats
 import numpy as np
 
@@ -118,8 +120,13 @@ class Simulator:
     - Requests are rejected if all channels are busy
     """
 
-    def __init__(self, params: SimulationRequest) -> None:
+    def __init__(
+        self,
+        params: SimulationRequest,
+        progress_callback: Callable[[float, dict], None] | None = None,
+    ) -> None:
         self.params = params
+        self.progress_callback = progress_callback
         self._validate_parameters()
 
         if params.random_seed is not None:
@@ -192,7 +199,7 @@ class Simulator:
 
     def run(self) -> SimulationResult:
         """
-        Execute the discrete-event simulation.
+        Execute the discrete-event simulation with progress tracking.
 
         Returns:
             SimulationResult containing metrics and visualization data
@@ -201,23 +208,43 @@ class Simulator:
             "Starting simulation run (T=%.2f)", self.params.simulation_time
         )
 
-        # Schedule first arrival
         self._schedule_event(
             delay=self.arrival_distribution.generate(),
             event_type=EventType.ARRIVAL,
         )
 
         events_processed = 0
+        next_progress_report = 0.1
+
         while self.event_queue and self.clock < self.params.simulation_time:
             self._max_queue_size = max(
                 self._max_queue_size, len(self.event_queue)
             )
+
             event = heapq.heappop(self.event_queue)
             self._events_processed += 1
             self.clock = event.time
 
             if self.clock > self.params.simulation_time:
                 break
+
+            progress_pct = self.clock / self.params.simulation_time
+            if (
+                self.progress_callback is not None
+                and progress_pct >= next_progress_report
+            ):
+                self.progress_callback(
+                    progress_pct,
+                    {
+                        "current_time": self.clock,
+                        "total_time": self.params.simulation_time,
+                        "events_processed": self._events_processed,
+                        "total_requests": self.stats.total_requests,
+                        "processed_requests": self.stats.processed_requests,
+                        "rejected_requests": self.stats.rejected_requests,
+                    },
+                )
+                next_progress_report += 0.1
 
             if event.event_type == EventType.ARRIVAL:
                 self._handle_arrival()
@@ -226,16 +253,31 @@ class Simulator:
 
             events_processed += 1
 
+        if self.progress_callback is not None:
+            self.progress_callback(
+                1.0,
+                {
+                    "current_time": self.clock,
+                    "total_time": self.params.simulation_time,
+                    "events_processed": self._events_processed,
+                    "total_requests": self.stats.total_requests,
+                    "processed_requests": self.stats.processed_requests,
+                    "rejected_requests": self.stats.rejected_requests,
+                },
+            )
+
         logger.debug(
             "Simulation complete: %d events processed, final_time=%.2f",
             events_processed,
             self.clock,
         )
+
         logger.info(
             "Simulation metrics: events=%d, max_queue=%d",
             self._events_processed,
             self._max_queue_size,
         )
+
         return self._calculate_results()
 
     def _schedule_event(
@@ -398,12 +440,15 @@ class Simulator:
         )
 
 
-def run_replications(params: SimulationRequest) -> SimulationResponse:
+def run_replications(
+    params: SimulationRequest, task: Task | None = None
+) -> SimulationResponse:
     """
     Run multiple replications of the simulation and aggregate results.
 
     Args:
         params: Simulation configuration
+        task: Optional task to track progress
 
     Returns:
         SimulationResponse with aggregated metrics and individual replications
@@ -413,6 +458,29 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
         params.num_replications,
         params.random_seed,
     )
+
+    current_replication = [0]
+
+    def progress_callback(progress: float, details: dict):
+        """Report progress to Celery."""
+        overall_progress = (
+            current_replication[0] + progress
+        ) / params.num_replications
+
+        task.update_state(
+            state="STARTED",
+            meta={
+                "status": "running",
+                "progress": overall_progress,
+                "current_replication": current_replication[0] + 1,
+                "total_replications": params.num_replications,
+                "replication_progress": progress,
+                "simulation_time": details.get("current_time"),
+                "total_time": details.get("total_time"),
+                "events_processed": details.get("events_processed"),
+                "requests_so_far": details.get("total_requests"),
+            },
+        )
 
     replication_results = []
 
@@ -425,7 +493,9 @@ def run_replications(params: SimulationRequest) -> SimulationResponse:
         else:
             sim_params = params
 
-        simulator = Simulator(sim_params)
+        simulator = Simulator(
+            sim_params, progress_callback=progress_callback if task else None
+        )
         result = simulator.run()
         replication_results.append(result)
 

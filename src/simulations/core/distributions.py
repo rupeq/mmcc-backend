@@ -6,12 +6,16 @@ number generation through seeding.
 """
 
 from abc import ABC, abstractmethod
+import logging
 
 import numpy as np
 from scipy.stats import truncnorm
 
 from src.simulations.core.enums import DistributionType
 from src.simulations.core.schemas import DistributionParams
+
+
+logger = logging.getLogger(__name__)
 
 
 class Distribution(ABC):
@@ -496,6 +500,187 @@ class TruncatedNormalDistribution(Distribution):
         return f"TruncatedNormal(μ={self.mu}, σ={self.sigma}, [{self.a}, {self.b}])"
 
 
+class EmpiricalDistribution(Distribution):
+    """Empirical distribution based on observed data.
+
+    This distribution allows to use real-world observed data
+    to generate random variates. Two methods are supported:
+
+    1. **Inverse Transform (ECDF)**: Uses the empirical cumulative
+       distribution function. Fast and preserves exact data range.
+
+    2. **Kernel Density Estimation (KDE)**: Fits a smooth continuous
+       distribution to the data. Can generate values outside the
+       observed range.
+
+    Attributes:
+        data: Sorted array of observed values.
+        method: Sampling method ('kde' or 'inverse_transform').
+        kde: Scipy KDE object (if method='kde').
+        ecdf: Empirical CDF values (if method='inverse_transform').
+
+    Examples:
+        >>> # From observed service times
+        >>> data = [1.2, 1.5, 2.1, 1.8, 2.3, 1.9, 2.0]
+        >>> dist = EmpiricalDistribution(data, method='inverse_transform')
+        >>> sample = dist.generate()  # Returns value in [1.2, 2.3]
+
+        >>> # With KDE for smooth interpolation
+        >>> dist_kde = EmpiricalDistribution(data, method='kde')
+        >>> sample_kde = dist_kde.generate()  # May be outside [1.2, 2.3]
+    """
+
+    def __init__(
+        self,
+        data: list[float],
+        method: str = "inverse_transform",
+        bandwidth: float | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> None:
+        """Initialize empirical distribution.
+
+        Args:
+            data: List of observed values (minimum 2 points).
+            method: 'inverse_transform' (ECDF) or 'kde'.
+            bandwidth: KDE bandwidth (optional, auto-detected if None).
+            rng: NumPy random generator. If None, creates a new generator.
+
+        Raises:
+            ValueError: If data has less than 2 points or method is invalid.
+        """
+        if len(data) < 2:
+            raise ValueError(
+                f"Empirical distribution requires at least 2 data points, got {len(data)}"
+            )
+
+        if method not in ("inverse_transform", "kde"):
+            raise ValueError(
+                f"Method must be 'inverse_transform' or 'kde', got {method}"
+            )
+
+        super().__init__(rng)
+        self.data = np.sort(data)  # Sort for ECDF
+        self.method = method
+        self.bandwidth = bandwidth
+
+        if method == "kde":
+            self._initialize_kde()
+        else:
+            self._initialize_ecdf()
+
+    def _initialize_kde(self) -> None:
+        """Initialize Kernel Density Estimation."""
+        from scipy.stats import gaussian_kde
+
+        if self.bandwidth is not None:
+            self.kde = gaussian_kde(self.data, bw_method=self.bandwidth)
+        else:
+            # Use Scott's rule (default)
+            self.kde = gaussian_kde(self.data)
+
+        logger.debug(
+            "Initialized KDE with %d data points, bandwidth=%.4f",
+            len(self.data),
+            self.kde.factor,
+        )
+
+    def _initialize_ecdf(self) -> None:
+        """Initialize Empirical CDF for inverse transform sampling."""
+        n = len(self.data)
+        # ECDF: F(x) = (number of observations ≤ x) / n
+        self.ecdf = np.arange(1, n + 1) / n
+
+        logger.debug(
+            "Initialized ECDF with %d data points, range=[%.4f, %.4f]",
+            n,
+            self.data[0],
+            self.data[-1],
+        )
+
+    def generate(self) -> float:
+        """Generate a random variate from the empirical distribution.
+
+        Returns:
+            Random value sampled from the empirical distribution.
+        """
+        self._generation_count += 1
+
+        if self.method == "kde":
+            # Sample from KDE
+            return float(self.kde.resample(1, seed=self.rng)[0, 0])
+        else:
+            # Inverse transform sampling
+            u = self.rng.uniform(0, 1)
+            # Find the value corresponding to CDF = u
+            idx = np.searchsorted(self.ecdf, u, side="right")
+            # Handle edge cases
+            if idx >= len(self.data):
+                return self.data[-1]
+            elif idx == 0:
+                return self.data[0]
+            else:
+                # Linear interpolation between data points
+                x0, x1 = self.data[idx - 1], self.data[idx]
+                f0, f1 = self.ecdf[idx - 1], self.ecdf[idx]
+                # Interpolate
+                if f1 - f0 > 0:
+                    alpha = (u - f0) / (f1 - f0)
+                    return float(x0 + alpha * (x1 - x0))
+                else:
+                    return float(x0)
+
+    def get_mean(self) -> float:
+        """Calculate empirical mean.
+
+        Returns:
+            Sample mean of the observed data.
+        """
+        return float(np.mean(self.data))
+
+    def get_variance(self) -> float:
+        """Calculate empirical variance.
+
+        Returns:
+            Sample variance of the observed data.
+        """
+        return float(np.var(self.data, ddof=1))
+
+    def get_std(self) -> float:
+        """Calculate empirical standard deviation.
+
+        Returns:
+            Sample standard deviation of the observed data.
+        """
+        return float(np.std(self.data, ddof=1))
+
+    def get_params(self) -> dict:
+        """Get distribution parameters.
+
+        Returns:
+            Dictionary with data statistics and method.
+        """
+        return {
+            "method": self.method,
+            "data_size": len(self.data),
+            "data_min": float(self.data[0]),
+            "data_max": float(self.data[-1]),
+            "data_mean": self.get_mean(),
+            "data_std": self.get_std(),
+            "bandwidth": self.bandwidth if self.method == "kde" else None,
+        }
+
+    def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            String like "Empirical(n=100, method=kde, range=[1.2, 5.4])".
+        """
+        return (
+            f"Empirical(n={len(self.data)}, method={self.method}, "
+            f"range=[{self.data[0]:.2f}, {self.data[-1]:.2f}])"
+        )
+
+
 def get_distribution(
     params: DistributionParams, rng: np.random.Generator | None = None
 ) -> Distribution:
@@ -534,6 +719,14 @@ def get_distribution(
     if params.distribution == DistributionType.TRUNCATED_NORMAL:
         return TruncatedNormalDistribution(
             mu=params.mu, sigma=params.sigma, a=params.a, b=params.b, rng=rng
+        )
+
+    if params.distribution == DistributionType.EMPIRICAL:
+        return EmpiricalDistribution(
+            data=params.data,
+            method=params.method,
+            bandwidth=params.bandwidth,
+            rng=rng,
         )
 
     raise NotImplementedError(

@@ -9,6 +9,7 @@ class DistributionType(str, Enum):
     GAMMA = "gamma"
     WEIBULL = "weibull"
     TRUNCATED_NORMAL = "truncated_normal"
+    EMPIRICAL = "empirical"
 
 
 class EventType(str, Enum):

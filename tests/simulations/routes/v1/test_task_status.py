@@ -1,4 +1,5 @@
 """Tests for task status endpoint."""
+
 import uuid
 import pytest
 from fastapi import status
@@ -77,7 +78,7 @@ class TestGetTaskStatus:
             "metrics": {
                 "processed_requests": 100,
                 "rejected_requests": 20,
-            }
+            },
         }
         mock_async_result.return_value = mock_result
 
@@ -146,12 +147,13 @@ class TestGetTaskStatus:
         app.dependency_overrides = {}
 
         from another_fastapi_jwt_auth.exceptions import JWTDecodeError
+
         with patch.object(
-                AuthJWT,
-                "jwt_required",
-                side_effect=JWTDecodeError(
-                    status.HTTP_401_UNAUTHORIZED, "Unauthorized"
-                ),
+            AuthJWT,
+            "jwt_required",
+            side_effect=JWTDecodeError(
+                status.HTTP_401_UNAUTHORIZED, "Unauthorized"
+            ),
         ):
             response = client.get(f"{BASE_URL}/tasks/test-task/status")
 
