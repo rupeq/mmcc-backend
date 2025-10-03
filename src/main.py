@@ -8,6 +8,9 @@ from src.authorization.routes.v1.routes import router as authorization_router
 from src.core.lifespan import lifespan
 from src.users.routes.v1.routes import router as users_router
 from src.simulations.routes.v1.routes import router as simulations_router
+from src.simulations.routes.v1.worker_routes import (
+    router as simulation_worker_router,
+)
 from src.simulations.models.simulations import *  # noqa
 from src.users.models.users import *  # noqa
 
@@ -36,3 +39,6 @@ app.include_router(
 )
 app.include_router(users_router, prefix=get_settings().service.api_prefix)
 app.include_router(simulations_router, prefix=get_settings().service.api_prefix)
+app.include_router(
+    simulation_worker_router, prefix=get_settings().service.api_prefix
+)

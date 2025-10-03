@@ -4,6 +4,7 @@ This module provides RESTful endpoints for creating, retrieving, updating,
 and deleting simulation configurations and their associated reports.
 """
 
+import datetime
 import logging
 import uuid
 
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 
+from src.simulations.tasks.simulations import run_simulation_task
 from src.core.db_session import get_session
 from src.simulations.db_utils.exceptions import (
     IdColumnRequiredException,
@@ -19,6 +21,7 @@ from src.simulations.db_utils.exceptions import (
     SimulationReportsNotFound,
     SimulationReportNotFound,
 )
+from src.simulations.models.enums import ReportStatus
 from src.simulations.routes.v1.exceptions import (
     BadFilterFormat,
     InvalidColumn,
@@ -42,6 +45,7 @@ from src.simulations.db_utils.simulation_reports import (
     get_simulation_configuration_report as get_simulation_configuration_report_from_db,
     get_simulation_configuration_reports as get_simulation_configuration_reports_from_db,
     delete_simulation_configuration_report as delete_simulation_configuration_report_from_db,
+    update_simulation_report_status,
 )
 from src.simulations.routes.v1.utils import (
     parse_search_query,
@@ -158,40 +162,23 @@ async def create_simulation(
     authorize: AuthJWT = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
-    """Create a new simulation configuration with an initial pending report.
+    """Create a new simulation configuration and start execution.
 
-    Atomically create a simulation configuration and its associated initial
-    report in a single database transaction. The report is created with
-    PENDING status.
+    This endpoint creates a simulation configuration and report in the database,
+    then dispatches an asynchronous task to execute the simulation. The task
+    is processed by a Celery worker and results are stored when complete.
 
     Args:
-        request: Simulation creation request containing:
-            - name: Configuration name (required)
-            - description: Optional description
-            - simulation_parameters: Simulation parameters (required)
+        request: Simulation configuration and parameters.
         authorize: JWT authentication dependency.
-        session: Asynchronous database session.
+        session: Database session dependency.
 
     Returns:
-        CreateSimulationResponse containing:
-            - simulation_configuration_id: UUID of created configuration
-            - simulation_report_id: UUID of created report
+        Response containing configuration ID and report ID for tracking.
 
     Raises:
-        HTTPException 401: If user is not authenticated.
-        HTTPException 422: If request validation fails.
-
-    Example:
-        POST /api/v1/simulations
-        {
-            "name": "Test Simulation",
-            "description": "A test simulation",
-            "simulationParameters": {
-                "numChannels": 2,
-                "simulationTime": 100.0,
-                ...
-            }
-        }
+        HTTPException 401: If authentication fails.
+        HTTPException 500: If task dispatch fails.
     """
     authorize.jwt_required()
 
@@ -204,6 +191,46 @@ async def create_simulation(
             by_alias=True
         ),
     )
+
+    try:
+        task = run_simulation_task.delay(
+            report_id=str(report.id),
+            simulation_params=request.simulation_parameters.model_dump(
+                by_alias=True
+            ),
+        )
+
+        logger.info(
+            "Dispatched simulation task: report_id=%s, task_id=%s",
+            report.id,
+            task.id,
+        )
+
+    except Exception as e:
+        logger.error(
+            "Failed to dispatch simulation task for report %s: %s",
+            report.id,
+            e,
+            exc_info=True,
+        )
+
+        try:
+            await update_simulation_report_status(
+                session,
+                report_id=report.id,
+                status=ReportStatus.FAILED,
+                error_message=f"Task dispatch failed: {str(e)[:500]}",
+                completed_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+        except Exception as db_error:
+            logger.error(
+                "Failed to update report after dispatch failure: %s", db_error
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Simulation service temporarily unavailable",
+        )
 
     return CreateSimulationResponse(
         simulation_configuration_id=configuration.id,
