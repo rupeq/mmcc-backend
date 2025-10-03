@@ -25,13 +25,13 @@ class TestErlangB:
         """Test M/M/1/1 with low load."""
         result = calculate_erlang_b(rho=0.5, c=1)
         # B(1, 0.5) = 0.5 / (1 + 0.5) = 1/3
-        assert result == pytest.approx(1/3, rel=0.01)
+        assert result == pytest.approx(1 / 3, rel=0.01)
 
     def test_single_channel_high_load(self):
         """Test M/M/1/1 with high load."""
         result = calculate_erlang_b(rho=2.0, c=1)
         # B(1, 2.0) = 2.0 / (1 + 2.0) = 2/3
-        assert result == pytest.approx(2/3, rel=0.01)
+        assert result == pytest.approx(2 / 3, rel=0.01)
 
     def test_multi_channel(self):
         """Test M/M/3/3 system."""
@@ -134,11 +134,15 @@ class TestTheoreticalMetrics:
 
         # Check consistency
         assert metrics.mean_service_time == pytest.approx(1.0 / mu_rate)
-        assert metrics.mean_interarrival_time == pytest.approx(1.0 / lambda_rate)
+        assert metrics.mean_interarrival_time == pytest.approx(
+            1.0 / lambda_rate
+        )
 
         # Throughput = λ(1 - B)
         expected_throughput = lambda_rate * (1 - metrics.blocking_probability)
-        assert metrics.throughput == pytest.approx(expected_throughput, rel=0.01)
+        assert metrics.throughput == pytest.approx(
+            expected_throughput, rel=0.01
+        )
 
 
 class TestComparison:
@@ -166,8 +170,12 @@ class TestComparison:
 
         assert comparison["applicable"] is True
         assert "blocking_probability" in comparison["metrics"]
-        assert comparison["metrics"]["blocking_probability"]["absolute_error"] == pytest.approx(0.0, abs=1e-10)
-        assert comparison["metrics"]["blocking_probability"]["relative_error"] == pytest.approx(0.0, abs=1e-10)
+        assert comparison["metrics"]["blocking_probability"][
+            "absolute_error"
+        ] == pytest.approx(0.0, abs=1e-10)
+        assert comparison["metrics"]["blocking_probability"][
+            "relative_error"
+        ] == pytest.approx(0.0, abs=1e-10)
 
     def test_with_confidence_intervals(self):
         """Test that CI coverage is checked."""
@@ -194,10 +202,11 @@ class TestComparison:
         comparison = compare_with_theory(sim_metrics, theoretical)
 
         # Check if theoretical value is within CI
-        if (
-                0.01 <= theoretical.blocking_probability <= 0.05
-        ):
-            assert comparison["metrics"]["blocking_probability"]["within_ci"] is True
+        if 0.01 <= theoretical.blocking_probability <= 0.05:
+            assert (
+                comparison["metrics"]["blocking_probability"]["within_ci"]
+                is True
+            )
 
     def test_non_applicable_system(self):
         """Test comparison for non-M/M/c/c systems."""

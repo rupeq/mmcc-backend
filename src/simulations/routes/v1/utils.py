@@ -228,3 +228,23 @@ def _optimize_multi_objective(request: OptimizationRequest):
         rejection_penalty=request.rejection_penalty,
         max_channels=request.max_channels or 50,
     )
+
+
+def _get_status_message(state: str) -> str:
+    """Get human-readable status message for task state.
+
+    Args:
+        state: Celery task state.
+
+    Returns:
+        Human-readable status message.
+    """
+    status_messages = {
+        "PENDING": "Task is queued",
+        "STARTED": "Task is running",
+        "SUCCESS": "Task completed successfully",
+        "FAILURE": "Task failed",
+        "RETRY": "Task is being retried",
+        "REVOKED": "Task was cancelled",
+    }
+    return status_messages.get(state, f"Unknown state: {state}")
