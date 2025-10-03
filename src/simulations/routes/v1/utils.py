@@ -2,6 +2,14 @@ import math
 
 from sqlalchemy import Sequence, RowMapping, Row
 
+from src.simulations.core.optimization import (
+    multi_objective_optimization,
+    CostFunction,
+    gradient_descent_channels,
+    minimize_cost,
+    binary_search_channels,
+)
+from src.simulations.core.schemas import OptimizationRequest
 from src.simulations.models.enums import ReportStatus
 from src.simulations.models.simulations import SimulationConfiguration
 from src.simulations.routes.v1.exceptions import (
@@ -137,4 +145,86 @@ def get_simulations_response(
         else None,
         page=page,
         limit=limit,
+    )
+
+
+def _optimize_binary_search(request: OptimizationRequest):
+    """Execute binary search optimization."""
+    if request.target_rejection_prob is None:
+        raise ValueError(
+            "target_rejection_prob is required for binary_search optimization"
+        )
+
+    return binary_search_channels(
+        base_request=request.base_request,
+        target_rejection_prob=request.target_rejection_prob,
+        max_channels=request.max_channels or 100,
+        tolerance=request.tolerance or 0.01,
+    )
+
+
+def _optimize_cost_minimization(request: OptimizationRequest):
+    """Execute cost minimization optimization."""
+    if request.channel_cost is None:
+        raise ValueError("channel_cost is required for cost_minimization")
+    if request.rejection_penalty is None:
+        raise ValueError("rejection_penalty is required for cost_minimization")
+
+    cost_function = CostFunction(
+        channel_cost=request.channel_cost,
+        rejection_penalty=request.rejection_penalty,
+    )
+
+    return minimize_cost(
+        base_request=request.base_request,
+        cost_function=cost_function,
+        max_channels=request.max_channels or 50,
+    )
+
+
+def _optimize_gradient_descent(request: OptimizationRequest):
+    """Execute gradient descent optimization."""
+    if (
+        request.channel_cost is not None
+        and request.rejection_penalty is not None
+    ):
+        objective = "cost"
+        cost_function = CostFunction(
+            channel_cost=request.channel_cost,
+            rejection_penalty=request.rejection_penalty,
+        )
+    else:
+        objective = "rejection"
+        cost_function = None
+
+    return gradient_descent_channels(
+        base_request=request.base_request,
+        objective=objective,
+        cost_function=cost_function,
+        initial_channels=request.max_channels,
+        max_iterations=20,
+    )
+
+
+def _optimize_multi_objective(request: OptimizationRequest):
+    """Execute multi-objective optimization."""
+    if request.rejection_weight is None:
+        raise ValueError("rejection_weight is required for multi_objective")
+    if request.utilization_weight is None:
+        raise ValueError("utilization_weight is required for multi_objective")
+    if request.cost_weight is None:
+        raise ValueError("cost_weight is required for multi_objective")
+    if request.channel_cost is None:
+        raise ValueError("channel_cost is required for multi_objective")
+    if request.rejection_penalty is None:
+        raise ValueError("rejection_penalty is required for multi_objective")
+
+    return multi_objective_optimization(
+        base_request=request.base_request,
+        rejection_weight=request.rejection_weight,
+        utilization_weight=request.utilization_weight,
+        cost_weight=request.cost_weight,
+        channel_cost=request.channel_cost,
+        rejection_penalty=request.rejection_penalty,
+        max_channels=request.max_channels or 50,
     )
