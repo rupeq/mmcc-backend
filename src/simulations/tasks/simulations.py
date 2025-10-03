@@ -14,7 +14,7 @@ from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded
 from pydantic import ValidationError
 
-from src.simulations.core.engine import run_replications
+from src.simulations.core.engine import run_replications, Simulator
 from src.simulations.core.schemas import SimulationRequest
 from src.simulations.db_utils.simulation_reports import (
     update_simulation_report_results,
@@ -156,7 +156,7 @@ class SimulationTask(Task):
         )
 
         try:
-            simulation_response = run_replications(sim_request)
+            simulation_response = run_replications(sim_request, task=self)
             logger.info(
                 "✅ Simulation complete for report %s: processed=%d, rejected=%d, "
                 "rejection_prob=%.4f",

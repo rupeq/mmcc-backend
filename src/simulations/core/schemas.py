@@ -46,12 +46,79 @@ class WeibullParams(BaseModel):
     lambda_param: float = Field(..., gt=0, description="Scale (lambda)")
 
 
+class EmpiricalParams(BaseModel):
+    """Represent parameters for an empirical distribution.
+
+    Use this to specify a custom distribution based on observed data.
+    The simulator will use kernel density estimation (KDE) or
+    inverse transform sampling to generate random variates.
+
+    Attributes:
+        distribution: Type identifier.
+        data: List of observed values (must have at least 2 points).
+        method: Sampling method ('kde' or 'inverse_transform').
+
+    Examples:
+        >>> # Service times from real observations
+        >>> params = EmpiricalParams(
+        ...     data=[1.2, 1.5, 2.1, 1.8, 2.3, 1.9],
+        ...     method="kde"
+        ... )
+    """
+
+    distribution: DistributionType = DistributionType.EMPIRICAL
+    data: list[float] = Field(
+        ...,
+        min_length=2,
+        description="Observed data points (minimum 2 values)",
+    )
+    method: Literal["kde", "inverse_transform"] = Field(
+        default="inverse_transform",
+        description="Sampling method: 'kde' (kernel density) or 'inverse_transform' (ECDF)",
+    )
+    bandwidth: float | None = Field(
+        default=None,
+        gt=0,
+        description="KDE bandwidth (optional, auto-detected if None)",
+    )
+
+    @model_validator(mode="after")
+    def validate_data_values(self):
+        """Validate empirical data."""
+        import logging
+
+        if len(self.data) < 2:
+            raise ValueError("Empirical data must contain at least 2 values")
+
+        if any(x < 0 for x in self.data):
+            logging.getLogger(__name__).warning(
+                "Empirical data contains negative values. "
+                "This may not be appropriate for inter-arrival or service times."
+            )
+
+        if len(set(self.data)) < len(self.data) * 0.5:
+            logging.getLogger(__name__).warning(
+                "Empirical data has many duplicate values (>50%%). "
+                "Consider using a parametric distribution instead."
+            )
+
+        if len(self.data) < 30:
+            logging.getLogger(__name__).warning(
+                "Small empirical sample size (%d points). "
+                "Results may be unreliable. Consider collecting more data.",
+                len(self.data),
+            )
+
+        return self
+
+
 DistributionParams = Union[
     ExponentialParams,
     UniformParams,
     TruncatedNormalParams,
     GammaParams,
     WeibullParams,
+    EmpiricalParams,
 ]
 
 
