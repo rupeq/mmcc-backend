@@ -37,27 +37,17 @@ class ChannelManager:
                 f"Number of channels must be positive, got {num_channels}"
             )
         self.num_channels = num_channels
-        self.channels_free_time = [0.0] * num_channels
+        self.free_heap = [(0.0, i) for i in range(num_channels)]
+        heapq.heapify(self.free_heap)
 
     def get_available_channel(self, current_time: float) -> int | None:
-        """
-        Find the first available channel at current_time.
-
-        Returns:
-            Channel ID if available, None if all busy.
-        """
-        earliest_free_time = min(self.channels_free_time)
-
-        if earliest_free_time <= current_time:
-            return self.channels_free_time.index(earliest_free_time)
-
+        if self.free_heap[0][0] <= current_time:
+            _, channel_id = heapq.heappop(self.free_heap)
+            return channel_id
         return None
 
-    def allocate_channel(self, channel_id: int, free_at_time: float) -> None:
-        """Mark a channel as busy until free_at_time"""
-        if not 0 <= channel_id < self.num_channels:
-            raise ValueError(f"Invalid channel_id: {channel_id}")
-        self.channels_free_time[channel_id] = free_at_time
+    def allocate_channel(self, channel_id: int, free_at_time: float):
+        heapq.heappush(self.free_heap, (free_at_time, channel_id))
 
     def get_utilization_stats(self, simulation_time: float) -> dict[str, float]:
         """Calculate channel utilization statistics"""
