@@ -212,6 +212,24 @@ class SimulationRequest(BaseModel):
         description="Maximum service time samples to collect (None = unlimited, 0 = disabled)",
     )
 
+    collect_temporal_profile: bool = Field(
+        default=False,
+        alias="collectTemporalProfile",
+        description="Enable temporal occupancy analysis",
+    )
+    temporal_window_size: float = Field(
+        default=10.0,
+        alias="temporalWindowSize",
+        gt=0,
+        description="Time window size for aggregation (seconds)",
+    )
+    temporal_snapshot_interval: float = Field(
+        default=1.0,
+        alias="temporalSnapshotInterval",
+        gt=0,
+        description="Interval for occupancy snapshots (seconds)",
+    )
+
     model_config = ConfigDict(
         populate_by_name=True,
     )
@@ -267,21 +285,6 @@ class SimulationRequest(BaseModel):
         return self
 
 
-class SimulationResult(BaseModel):
-    """Represent the results of a single simulation run."""
-
-    metrics: SimulationMetrics
-    gantt_chart: list[GanttChartItem]
-    raw_service_times: list[float] | None = None
-
-
-class SimulationResponse(BaseModel):
-    """Represent the response containing aggregated and individual simulation results."""
-
-    aggregated_metrics: AggregatedMetrics
-    replications: list[SimulationResult]
-
-
 class SweepParameter(BaseModel):
     """Define the parameter to be varied in a sweep experiment."""
 
@@ -306,19 +309,6 @@ class SweepRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-
-
-class SweepResultItem(BaseModel):
-    """Represent the simulation results for a single parameter value in a sweep."""
-
-    parameter_value: Union[int, float, str]
-    result: SimulationResponse
-
-
-class SweepResponse(BaseModel):
-    """Represent the complete response for a parameter sweep experiment."""
-
-    results: list[SweepResultItem]
 
 
 class OptimizationRequest(BaseModel):
@@ -396,3 +386,144 @@ class OptimizationResultResponse(BaseModel):
         plt.close()
 
         return f"data:image/png;base64,{plot_base64}"
+
+
+class TimeWindow(BaseModel):
+    """Represent a time window for temporal analysis."""
+
+    start_time: float = Field(..., description="Window start time")
+    end_time: float = Field(..., description="Window end time")
+    duration: float = Field(..., description="Window duration")
+
+
+class TemporalMetrics(BaseModel):
+    """Metrics for a specific time window."""
+
+    time_window: TimeWindow
+    arrivals: int = Field(..., description="Arrivals in window")
+    processed: int = Field(..., description="Processed requests")
+    rejected: int = Field(..., description="Rejected requests")
+    rejection_rate: float = Field(..., description="Rejection rate")
+    avg_utilization: float = Field(
+        ..., description="Average channel utilization"
+    )
+    avg_busy_channels: float = Field(..., description="Average busy channels")
+
+
+class PhaseMetrics(BaseModel):
+    """Metrics for a non-stationary phase."""
+
+    phase_index: int = Field(..., description="Phase number")
+    start_time: float
+    end_time: float
+    arrival_rate: float = Field(..., description="Configured arrival rate")
+    total_arrivals: int
+    processed_requests: int
+    rejected_requests: int
+    rejection_probability: float
+    avg_utilization: float
+    throughput: float
+
+
+class OccupancySnapshot(BaseModel):
+    """Channel occupancy at a point in time."""
+
+    time: float
+    busy_channels: int = Field(..., ge=0, description="Number of busy channels")
+    utilization: float = Field(..., ge=0, le=1)
+
+
+class PeakPeriod(BaseModel):
+    """Detected peak or valley period."""
+
+    period_type: Literal["peak", "valley"]
+    start_time: float
+    end_time: float
+    duration: float
+    avg_busy_channels: float
+    avg_utilization: float
+    rejection_count: int
+
+
+class BusyIdlePeriod(BaseModel):
+    """Statistics about busy/idle periods for a channel."""
+
+    channel_id: int
+    period_type: Literal["busy", "idle"]
+    duration: float
+    start_time: float
+    end_time: float
+
+
+class BusyIdleStatistics(BaseModel):
+    """Aggregated busy/idle period statistics."""
+
+    channel_id: int
+    busy_periods: list[float] = Field(
+        ..., description="Durations of busy periods"
+    )
+    idle_periods: list[float] = Field(
+        ..., description="Durations of idle periods"
+    )
+    mean_busy_duration: float
+    mean_idle_duration: float
+    max_busy_duration: float
+    max_idle_duration: float
+    total_busy_time: float
+    total_idle_time: float
+
+
+class TemporalProfile(BaseModel):
+    """Complete temporal occupancy profile."""
+
+    # Time-series data
+    window_size: float = Field(
+        ..., description="Time window size for aggregation"
+    )
+    temporal_metrics: list[TemporalMetrics]
+
+    # Occupancy snapshots (sampled at intervals)
+    occupancy_snapshots: list[OccupancySnapshot]
+
+    # Phase analysis (for non-stationary)
+    phase_metrics: list[PhaseMetrics] | None = None
+
+    # Peak/valley detection
+    peak_periods: list[PeakPeriod]
+
+    # Busy/idle distributions
+    busy_idle_stats: list[BusyIdleStatistics]
+
+    # Summary statistics
+    overall_peak_utilization: float
+    overall_valley_utilization: float
+    utilization_variance: float
+
+
+class SimulationResult(BaseModel):
+    """Represent the results of a single simulation run."""
+
+    metrics: SimulationMetrics
+    gantt_chart: list[GanttChartItem]
+    raw_service_times: list[float] | None = None
+    temporal_profile: TemporalProfile | None = None
+
+
+class SimulationResponse(BaseModel):
+    """Represent the response containing aggregated and individual simulation results."""
+
+    aggregated_metrics: AggregatedMetrics
+    replications: list[SimulationResult]
+
+
+class SweepResultItem(BaseModel):
+    """Represent the simulation results for a single parameter value in a sweep."""
+
+    parameter_value: Union[int, float, str]
+    result: SimulationResponse
+
+
+class SweepResponse(BaseModel):
+    """Represent the complete response for a parameter sweep experiment."""
+
+    results: list[SweepResultItem]

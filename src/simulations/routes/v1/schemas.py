@@ -8,6 +8,7 @@ from src.simulations.core.schemas import (
     SimulationRequest,
     SimulationResponse,
     SweepResponse,
+    TemporalProfile,
 )
 from src.simulations.models.enums import ReportStatus
 
@@ -250,3 +251,9 @@ class ServiceTimeVisualizationsResponse(BaseModel):
     qq_plot: PlotResponse | None = Field(
         None, description="Q-Q plot (requires theoretical distribution)"
     )
+
+
+class GetTemporalAnalysis(TemporalProfile):
+    """Represent Temporal analysis"""
+
+    pass
