@@ -14,6 +14,10 @@ from src.background_tasks.routes.v1.routes import (
 from src.simulations.routes.v1.worker_routes import (
     router as simulation_worker_router,
 )
+from src.simulations.routes.v1.analysis_routes import router as analysis_router
+from src.simulations.routes.v1.optimization_routes import (
+    router as optimization_router,
+)
 from src.simulations.models.simulations import *  # noqa
 from src.users.models.users import *  # noqa
 from src.background_tasks.models.background_tasks import *  # noqa: F401
@@ -49,4 +53,8 @@ app.include_router(
 )
 app.include_router(
     background_tasks_router, prefix=get_settings().service.api_prefix
+)
+app.include_router(analysis_router, prefix=get_settings().service.api_prefix)
+app.include_router(
+    optimization_router, prefix=get_settings().service.api_prefix
 )

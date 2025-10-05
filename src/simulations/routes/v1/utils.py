@@ -1,7 +1,21 @@
+import logging
 import math
+import base64
+import io
 
+from matplotlib import pyplot as plt
 from sqlalchemy import Sequence, RowMapping, Row
+from matplotlib.figure import Figure
 
+from src.simulations.core.schemas import (
+    ExponentialParams,
+    UniformParams,
+    GammaParams,
+    WeibullParams,
+    TruncatedNormalParams,
+    EmpiricalParams,
+)
+from src.simulations.core.distributions import get_distribution, Distribution
 from src.simulations.core.optimization import (
     multi_objective_optimization,
     CostFunction,
@@ -20,7 +34,11 @@ from src.simulations.routes.v1.exceptions import (
 from src.simulations.routes.v1.schemas import (
     GetSimulationsResponse,
     SimulationConfigurationInfo,
+    SimulationReport,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def parse_search_query(search: str | None) -> dict[str, str]:
@@ -228,3 +246,97 @@ def _optimize_multi_objective(request: OptimizationRequest):
         rejection_penalty=request.rejection_penalty,
         max_channels=request.max_channels or 50,
     )
+
+
+def figure_to_base64(fig: Figure) -> str:
+    """Convert matplotlib figure to base64-encoded PNG.
+
+    Args:
+        fig: Matplotlib figure object.
+
+    Returns:
+        Base64-encoded string of PNG image.
+    """
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode("utf-8")
+    plt.close(fig)
+    return img_base64
+
+
+def extract_service_times_from_report(
+    report: SimulationReport,
+) -> list[float]:
+    """Extract service times from simulation report.
+
+    Args:
+        report: Simulation report with results.
+
+    Returns:
+        List of service times from all replications.
+
+    Raises:
+        ValueError: If report has no service times data.
+    """
+    if not report.results or "replications" not in report.results:
+        raise ValueError("Report has no replication data")
+
+    service_times = []
+    for replication in report.results["replications"]:
+        if "raw_service_times" in replication:
+            raw_times = replication["raw_service_times"]
+            if raw_times:
+                service_times.extend(raw_times)
+
+    if not service_times:
+        raise ValueError(
+            "No service times collected. Ensure simulation was run with "
+            "collect_service_times=true"
+        )
+
+    return service_times
+
+
+async def get_service_distribution_from_report(
+    report: SimulationReport,
+) -> Distribution | None:
+    """Extract service distribution from simulation configuration.
+
+    Args:
+        report: Simulation report with configuration.
+
+    Returns:
+        Service distribution object or None if cannot be reconstructed.
+    """
+    try:
+        config = await report.awaitable_attrs.configuration
+        sim_params = config.simulation_parameters
+
+        if "serviceProcess" not in sim_params:
+            return None
+
+        service_params = sim_params["serviceProcess"]
+
+        dist_type = service_params.get("distribution")
+
+        if dist_type == "exponential":
+            params = ExponentialParams(**service_params)
+        elif dist_type == "uniform":
+            params = UniformParams(**service_params)
+        elif dist_type == "gamma":
+            params = GammaParams(**service_params)
+        elif dist_type == "weibull":
+            params = WeibullParams(**service_params)
+        elif dist_type == "truncated_normal":
+            params = TruncatedNormalParams(**service_params)
+        elif dist_type == "empirical":
+            params = EmpiricalParams(**service_params)
+        else:
+            return None
+
+        return get_distribution(params)
+
+    except Exception as e:
+        logger.error(f"Failed to reconstruct service distribution: {e}")
+        return None

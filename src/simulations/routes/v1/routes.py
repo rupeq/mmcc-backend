@@ -7,37 +7,24 @@ and deleting simulation configurations and their associated reports.
 import datetime
 import logging
 import uuid
-from pathlib import Path
 
 from another_fastapi_jwt_auth import AuthJWT
-from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
-from celery.result import AsyncResult
-from starlette.responses import Response, FileResponse
 
 from src.background_tasks.db_utils.background_tasks import (
     create_background_task,
-    get_background_task,
 )
-from src.simulations.worker import celery_app
 from src.simulations.core.engine import run_replications
-from src.simulations.core.schemas import (
-    OptimizationResultResponse,
-    OptimizationRequest,
-    GanttChartItem,
-)
-from src.simulations.core.visualization import SimulationVisualizer
 from src.simulations.routes.v1.rate_limiter import check_rate_limit
 from src.simulations.tasks.simulations import run_simulation_task
-from src.simulations.tasks.animation import generate_animation_task
 from src.core.db_session import get_session
 from src.simulations.db_utils.exceptions import (
     IdColumnRequiredException,
     SimulationNotFound,
     SimulationReportsNotFound,
     SimulationReportNotFound,
-    BackgroundTaskNotFound,
 )
 from src.simulations.models.enums import ReportStatus
 from src.background_tasks.models.enums import TaskType
@@ -53,7 +40,6 @@ from src.simulations.routes.v1.schemas import (
     GetSimulationConfigurationResponse,
     GetSimulationConfigurationReportsResponse,
     GetSimulationConfigurationReportResponse,
-    CreateAnimationResponse,
 )
 from src.simulations.db_utils.simulation_configurations import (
     get_simulation_configurations,
@@ -72,10 +58,6 @@ from src.simulations.routes.v1.utils import (
     validate_simulation_columns,
     verify_report_status_value,
     get_simulations_response,
-    _optimize_binary_search,
-    _optimize_cost_minimization,
-    _optimize_gradient_descent,
-    _optimize_multi_objective,
 )
 
 router = APIRouter(tags=["v1", "simulations"], prefix="/v1/simulations")
@@ -506,147 +488,6 @@ async def delete_simulation_configuration_report(
 
 
 @router.post(
-    "/optimize",
-    response_model=OptimizationResultResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Optimize channel configuration",
-    description="""
-    Find optimal number of channels based on different objectives:
-    - **binary_search**: Find minimum channels for target rejection probability
-    - **cost_minimization**: Minimize total cost (channel cost + rejection penalty)
-    - **gradient_descent**: Use gradient descent for flexible optimization
-    - **multi_objective**: Balance rejection, utilization, and cost
-    """,
-)
-async def optimize_channels(
-    request: OptimizationRequest,
-    authorize: AuthJWT = Depends(),
-):
-    """Optimize channel configuration using various algorithms.
-
-    This endpoint runs optimization algorithms to find the optimal number
-    of channels based on the specified objective. Each optimization type
-    requires different parameters.
-
-    **Binary Search Parameters:**
-    - target_rejection_prob (required): Target maximum rejection probability
-    - max_channels (optional): Maximum channels to consider (default: 100)
-    - tolerance (optional): Acceptable tolerance (default: 0.01)
-
-    **Cost Minimization Parameters:**
-    - channel_cost (required): Cost per channel
-    - rejection_penalty (required): Penalty per rejected request
-    - max_channels (optional): Maximum channels to evaluate
-
-    **Gradient Descent Parameters:**
-    - channel_cost (optional): For cost objective
-    - rejection_penalty (optional): For cost objective
-    - max_channels (optional): Starting point hint
-
-    **Multi-Objective Parameters:**
-    - rejection_weight (required): Weight for rejection (0-1)
-    - utilization_weight (required): Weight for utilization (0-1)
-    - cost_weight (required): Weight for cost (0-1)
-    - channel_cost (required): Cost per channel
-    - rejection_penalty (required): Penalty per rejected request
-
-    Args:
-        request: Optimization configuration and parameters.
-        authorize: JWT authentication dependency.
-
-    Returns:
-        OptimizationResultResponse containing:
-            - optimal_channels: Recommended number of channels
-            - achieved_rejection_prob: Rejection probability with optimal channels
-            - achieved_utilization: Channel utilization with optimal channels
-            - throughput: System throughput
-            - total_cost: Total cost (if applicable)
-            - iterations: Number of iterations performed
-            - convergence_history: Optimization trajectory
-
-    Raises:
-        HTTPException 400: If required parameters are missing.
-        HTTPException 401: If authentication fails.
-        HTTPException 408: If optimization times out.
-        HTTPException 422: If parameters are invalid.
-
-    Example:
-        ```json
-        {
-          "base_request": {
-            "numChannels": 1,
-            "simulationTime": 100,
-            "numReplications": 10,
-            "arrivalProcess": {"distribution": "exponential", "rate": 5.0},
-            "serviceProcess": {"distribution": "exponential", "rate": 10.0}
-          },
-          "optimizationType": "binary_search",
-          "targetRejectionProb": 0.05,
-          "maxChannels": 20
-        }
-        ```
-    """
-    authorize.jwt_required()
-    check_rate_limit(
-        user_id=authorize.get_jwt_subject(),
-        max_per_hour=5,
-        window_seconds=3600,
-        fail_open=True,
-    )
-
-    logger.info(
-        "Optimization request: type=%s, user=%s",
-        request.optimization_type,
-        authorize.get_jwt_subject(),
-    )
-
-    try:
-        if request.optimization_type == "binary_search":
-            result = _optimize_binary_search(request)
-        elif request.optimization_type == "cost_minimization":
-            result = _optimize_cost_minimization(request)
-        elif request.optimization_type == "gradient_descent":
-            result = _optimize_gradient_descent(request)
-        elif request.optimization_type == "multi_objective":
-            result = _optimize_multi_objective(request)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unknown optimization type: {request.optimization_type}",
-            )
-
-        logger.info(
-            "Optimization complete: type=%s, optimal_channels=%d, iterations=%d",
-            request.optimization_type,
-            result.optimal_channels,
-            result.iterations,
-        )
-
-        return OptimizationResultResponse.model_validate(
-            result, from_attributes=True
-        )
-
-    except ValueError as e:
-        logger.error("Optimization validation error: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid optimization parameters: {str(e)}",
-        )
-    except TimeoutError:
-        logger.error("Optimization timeout")
-        raise HTTPException(
-            status_code=status.HTTP_408_REQUEST_TIMEOUT,
-            detail="Optimization took too long. Try reducing max_channels or simulation_time.",
-        )
-    except Exception as e:
-        logger.exception("Optimization failed: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Optimization failed. Please check your parameters and try again.",
-        )
-
-
-@router.post(
     "/compare-theory",
     status_code=status.HTTP_200_OK,
     summary="Compare simulation with theoretical predictions",
@@ -795,196 +636,3 @@ async def compare_with_theory(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Comparison failed: {str(e)}",
         )
-
-
-@router.get(
-    "/{configuration_id}/reports/{report_id}/gantt",
-    response_class=Response,
-    responses={200: {"content": {"image/png": {}}}},
-    summary="Generate Gantt chart visualization",
-)
-async def get_gantt_chart(
-    configuration_id: uuid.UUID,
-    report_id: uuid.UUID,
-    authorize: AuthJWT = Depends(),
-    session: AsyncSession = Depends(get_session),
-    width: int = Query(12, ge=4, le=20, description="Figure width in inches"),
-    height: int = Query(8, ge=4, le=16, description="Figure height in inches"),
-):
-    """Generate Gantt chart from simulation report.
-
-    Returns an image showing channel occupancy over time. Requires that
-    the simulation was run with collect_gantt_data=true.
-    """
-    """
-    Generate and return a Gantt chart for a completed simulation report.
-    """
-    authorize.jwt_required()
-
-    try:
-        report = await get_simulation_configuration_report_from_db(
-            session,
-            user_id=uuid.UUID(authorize.get_jwt_subject()),
-            report_id=report_id,
-            simulation_configuration_id=configuration_id,
-        )
-        configuration = await report.awaitable_attrs.configuration
-    except SimulationReportNotFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Simulation report not found.",
-        )
-
-    if report.status != ReportStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Report is not complete. Current status: {report.status}",
-        )
-
-    if not report.results or not report.results.get("replications"):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No results found in report.",
-        )
-
-    first_replication = report.results["replications"][0]
-    gantt_data = first_replication.get("gantt_chart")
-
-    if not gantt_data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No Gantt chart data found. Ensure simulation was run with 'collectGanttData=true'.",
-        )
-
-    try:
-        gantt_items = [GanttChartItem(**item) for item in gantt_data]
-        num_channels = configuration.simulation_parameters.get("numChannels", 1)
-
-        image_buffer = SimulationVisualizer.plot_gantt_chart(
-            gantt_items=gantt_items,
-            num_channels=num_channels,
-            width=width,
-            height=height,
-        )
-    except Exception as e:
-        logger.exception(
-            "Failed to generate Gantt chart for report %s", report_id
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate visualization: {e}",
-        )
-
-    return Response(content=image_buffer.getvalue(), media_type="image/png")
-
-
-@router.post(
-    "/{configuration_id}/reports/{report_id}/animation",
-    response_model=CreateAnimationResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Request animation generation",
-)
-async def request_animation_generation(
-    configuration_id: uuid.UUID,
-    report_id: uuid.UUID,
-    authorize: AuthJWT = Depends(),
-    fps: int = Query(20, ge=5, le=60),
-    duration: int = Query(15, ge=5, le=60),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Dispatch a background task to generate an MP4 animation of the simulation.
-    This endpoint returns a task ID immediately. Use the task status endpoint
-    to check for completion, then use the GET endpoint to download the video.
-    """
-    authorize.jwt_required()
-    user_id = authorize.get_jwt_subject()
-
-    try:
-        task = generate_animation_task.delay(
-            report_id=str(report_id),
-            configuration_id=str(configuration_id),
-            user_id=user_id,
-            fps=fps,
-            duration=duration,
-        )
-        background_task = await create_background_task(
-            session,
-            task_id=task.id,
-            task_type=TaskType.ANIMATION,
-            user_id=uuid.UUID(user_id),
-            subject_id=report_id,
-        )
-        return CreateAnimationResponse(task_id=background_task.id)
-    except Exception as e:
-        logger.exception(
-            "Failed to dispatch animation task for report %s", report_id
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to dispatch animation task: {e}",
-        )
-
-
-@router.get(
-    "/animation/{task_id}",
-    response_class=FileResponse,
-    summary="Download generated animation",
-    responses={
-        200: {"content": {"video/mp4": {}}},
-        404: {"description": "Task not found or animation not ready"},
-    },
-)
-async def get_animation(
-    task_id: uuid.UUID,
-    background_tasks: BackgroundTasks,
-    authorize: AuthJWT = Depends(),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Download a generated animation video file.
-    Poll the task status endpoint first. Once the state is 'SUCCESS',
-    use this endpoint with the task ID to retrieve the MP4 file.
-    """
-    authorize.jwt_required()
-    user_id = uuid.UUID(authorize.get_jwt_subject())
-
-    try:
-        background_task = await get_background_task(
-            session, task_id=task_id, user_id=user_id
-        )
-    except BackgroundTaskNotFound:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Background task not found.",
-        )
-
-    result = AsyncResult(background_task.task_id, app=celery_app)
-
-    if not result.ready():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Animation is still being generated or task ID is invalid.",
-        )
-    if result.state != "SUCCESS":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task failed and could not generate animation. Reason: {result.info}",
-        )
-
-    filepath = result.result.get("filepath")
-    if not filepath or not Path(filepath).exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Animation file not found. It may have expired or failed to save.",
-        )
-
-    background_tasks.add_task(
-        lambda p: Path(p).unlink(missing_ok=True), filepath
-    )
-
-    return FileResponse(
-        path=filepath,
-        media_type="video/mp4",
-        filename=f"simulation_{task_id}.mp4",
-    )
