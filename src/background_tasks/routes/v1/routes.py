@@ -15,7 +15,7 @@ from src.background_tasks.routes.v1.schemas import (
 )
 from src.background_tasks.routes.v1.utils import (
     verify_subject_ids,
-    get_status_message,
+    build_task_response,
 )
 from src.core.db_session import get_session
 from src.background_tasks.db_utils.background_tasks import (
@@ -42,25 +42,30 @@ async def get_background_tasks(
     authorize: AuthJWT = Depends(),
     session: AsyncSession = Depends(get_session),
     subject_ids: list[str] | None = Query(
-        None, description="Comma-separated list of subjects to return."
+        None, description="Filter by subject IDs (comma-separated)."
     ),
 ):
     """List background tasks for the authenticated user.
 
-    Validate JWT, optionally filter by subject IDs, and return the
-    user's background tasks.
+    Retrieve all background tasks belonging to the authenticated user,
+    with optional filtering by subject IDs (e.g., report IDs).
 
     Args:
-        authorize: Dependency that enforces JWT authorization.
-        session: Async SQLAlchemy session.
+        authorize: JWT authorization dependency that enforces authentication.
+        session: Async SQLAlchemy database session.
         subject_ids: Optional list of subject IDs to filter tasks.
 
     Returns:
-        GetBackgroundTasksResponse: Collection of background tasks.
+        GetBackgroundTasksResponse containing:
+            - background_tasks: List of task records
+            - total: Total count of tasks
 
     Raises:
         HTTPException: 400 if a subject ID is invalid.
         HTTPException: 404 if no background tasks are found.
+
+    Example:
+        GET /api/v1/background-tasks?subject_ids=uuid1,uuid2
     """
     authorize.jwt_required()
     user_id = uuid.UUID(authorize.get_jwt_subject())
@@ -70,19 +75,21 @@ async def get_background_tasks(
     except InvalidSubjectID:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid subject ID",
+            detail="Invalid subject ID format. Must be valid UUIDs.",
         )
 
     try:
-        return {
-            "background_tasks": await get_background_tasks_from_db(
-                session, user_id=user_id, subject_ids=subject_ids
-            )
-        }
+        tasks = await get_background_tasks_from_db(
+            session, user_id=user_id, subject_ids=subject_ids
+        )
+        return GetBackgroundTasksResponse(
+            background_tasks=tasks,
+            total=len(tasks),
+        )
     except BackgroundTaskNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Background tasks not found",
+            detail="No background tasks found for the specified filters.",
         )
 
 
@@ -96,20 +103,24 @@ async def get_background_task(
     authorize: AuthJWT = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
-    """Get a single background task by ID.
+    """Get a single background task record by ID.
 
-    Validate JWT and return the background task owned by the user.
+    Retrieve metadata about a background task, including its task ID,
+    type, creation time, and associated subject.
 
     Args:
-        background_task_id: Background task UUID.
-        authorize: Dependency that enforces JWT authorization.
-        session: Async SQLAlchemy session.
+        background_task_id: UUID of the background task to retrieve.
+        authorize: JWT authorization dependency.
+        session: Async SQLAlchemy database session.
 
     Returns:
-        GetBackgroundTaskResponse: Background task details.
+        GetBackgroundTaskResponse containing task metadata.
 
     Raises:
         HTTPException: 404 if the background task is not found.
+
+    Example:
+        GET /api/v1/background-tasks/{uuid}
     """
     authorize.jwt_required()
     user_id = uuid.UUID(authorize.get_jwt_subject())
@@ -121,7 +132,7 @@ async def get_background_task(
     except BackgroundTaskNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Background task not found",
+            detail="Background task not found or does not belong to you.",
         )
 
 
@@ -136,23 +147,59 @@ async def get_task(
     authorize: AuthJWT = Depends(),
     session: AsyncSession = Depends(get_session),
 ):
-    """Get Celery task status for a background task.
+    """Get Celery task execution status and results.
 
-    Validate JWT, verify ownership of the background task, and query the
-    Celery backend for task status, progress, and results.
+    Query the Celery result backend for the current status, progress,
+    results, or errors associated with a background task. This endpoint
+    provides real-time task execution status.
 
     Args:
         background_task_id: Parent background task UUID.
-        task_id: Celery task identifier.
-        authorize: Dependency that enforces JWT authorization.
-        session: Async SQLAlchemy session.
+        task_id: Celery task identifier (string UUID).
+        authorize: JWT authorization dependency.
+        session: Async SQLAlchemy database session.
 
     Returns:
-        GetTaskResponse: Task status, progress, result, or error.
+        GetTaskResponse containing:
+            - task_id: Celery task identifier
+            - status: Standardized task status (pending, running, etc.)
+            - status_message: Human-readable status description
+            - progress: Progress information (if running)
+            - result: Task results (if succeeded)
+            - error: Error details (if failed)
+            - timestamps: Start and completion times
 
     Raises:
         HTTPException: 404 if the background task is not found.
-        HTTPException: 500 on failure to retrieve task status.
+        HTTPException: 500 if task status retrieval fails.
+
+    Example:
+        GET /api/v1/background-tasks/{bg_uuid}/tasks/{task_uuid}
+
+        Response (running):
+        {
+            "task_id": "abc123...",
+            "status": "running",
+            "status_message": "Simulation is running",
+            "progress": {
+                "current": 50,
+                "total": 100,
+                "percent": 50.0,
+                "message": "Processing replication 5/10"
+            }
+        }
+
+        Response (success):
+        {
+            "task_id": "abc123...",
+            "status": "success",
+            "status_message": "Task completed successfully",
+            "result": {
+                "data": { "processed_requests": 100, ... },
+                "summary": "Simulation completed"
+            },
+            "completed_at": "2025-01-05T12:00:00Z"
+        }
     """
     authorize.jwt_required()
     user_id = uuid.UUID(authorize.get_jwt_subject())
@@ -167,63 +214,26 @@ async def get_task(
     except BackgroundTaskNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Background task not found",
+            detail="Background task not found or does not belong to you.",
         )
 
     try:
-        result = AsyncResult(background_task.task_id, app=celery_app)
+        celery_result = AsyncResult(background_task.task_id, app=celery_app)
 
-        state = result.state
-        status_msg = get_status_message(state)
-
-        response = GetTaskResponse(
+        task_response = build_task_response(
             task_id=task_id,
-            state=state,
-            status=status_msg,
+            celery_result=celery_result,
+            task_type=background_task.task_type.value,
+            include_traceback=False,
         )
-
-        if state == "PENDING":
-            response.status = "Task is queued or does not exist"
-
-        elif state == "STARTED":
-            response.status = "Simulation is running"
-            if result.info:
-                response.progress = result.info
-
-        elif state == "SUCCESS":
-            response.status = "Simulation completed successfully"
-            response.result = result.result if result.result else None
-
-        elif state == "FAILURE":
-            response.status = "Simulation failed"
-            response.error = (
-                str(result.info) if result.info else "Unknown error"
-            )
-            logger.warning(
-                "Task %s failed: %s",
-                task_id,
-                response.error,
-            )
-
-        elif state == "RETRY":
-            response.status = "Simulation is being retried after an error"
-            if result.info:
-                response.error = (
-                    str(result.info)
-                    if isinstance(result.info, Exception)
-                    else str(result.info.get("exc", "Unknown error"))
-                )
-
-        elif state == "REVOKED":
-            response.status = "Simulation was cancelled"
 
         logger.debug(
-            "Task status retrieved: task_id=%s, state=%s",
+            "Task status retrieved: task_id=%s, status=%s",
             task_id,
-            state,
+            task_response.status,
         )
 
-        return response
+        return task_response
 
     except Exception as e:
         logger.error(
