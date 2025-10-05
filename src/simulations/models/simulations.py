@@ -10,6 +10,7 @@ from sqlalchemy.types import Enum as SQLAlchemyEnum
 
 if TYPE_CHECKING:
     from src.users.models.users import User
+    from src.background_tasks.models.background_tasks import BackgroundTask
 
 
 class SimulationConfiguration(Base):
@@ -97,6 +98,9 @@ class SimulationReport(Base):
     )
     configuration: Mapped["SimulationConfiguration"] = relationship(
         back_populates="reports"
+    )
+    tasks: Mapped[list["BackgroundTask"]] = relationship(
+        primaryjoin="BackgroundTask.subject_id == foreign(SimulationReport.id)",
     )
 
     created_at: Mapped[DateTime] = mapped_column(

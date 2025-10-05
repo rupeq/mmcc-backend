@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
@@ -16,8 +17,11 @@ async def cleanup_stale_pending_reports():
     """Clean up reports stuck in PENDING > 24h"""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    async with get_worker_session() as session:
-        rowcount = await cleanup_stale_pending_reports_from_db(
-            session, cutoff=cutoff
-        )
-        logger.info("Cleaned up %d stale reports", rowcount)
+    async def _cleanup():
+        async with get_worker_session() as session:
+            rowcount = await cleanup_stale_pending_reports_from_db(
+                session, cutoff=cutoff
+            )
+            logger.info("Cleaned up %d stale reports", rowcount)
+
+    asyncio.run(_cleanup())

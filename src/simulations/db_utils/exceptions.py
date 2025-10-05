@@ -20,3 +20,9 @@ class SimulationReportsNotFound(Exception):
     """Exception raised when the reports are not found."""
 
     pass
+
+
+class BackgroundTaskNotFound(Exception):
+    """Exception raised when the background task is not found."""
+
+    pass

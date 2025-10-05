@@ -7,29 +7,40 @@ and deleting simulation configurations and their associated reports.
 import datetime
 import logging
 import uuid
+from pathlib import Path
 
 from another_fastapi_jwt_auth import AuthJWT
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette import status
 from celery.result import AsyncResult
+from starlette.responses import Response, FileResponse
 
+from src.background_tasks.db_utils.background_tasks import (
+    create_background_task,
+    get_background_task,
+)
 from src.simulations.worker import celery_app
 from src.simulations.core.engine import run_replications
 from src.simulations.core.schemas import (
     OptimizationResultResponse,
     OptimizationRequest,
+    GanttChartItem,
 )
+from src.simulations.core.visualization import SimulationVisualizer
 from src.simulations.routes.v1.rate_limiter import check_rate_limit
 from src.simulations.tasks.simulations import run_simulation_task
+from src.simulations.tasks.animation import generate_animation_task
 from src.core.db_session import get_session
 from src.simulations.db_utils.exceptions import (
     IdColumnRequiredException,
     SimulationNotFound,
     SimulationReportsNotFound,
     SimulationReportNotFound,
+    BackgroundTaskNotFound,
 )
 from src.simulations.models.enums import ReportStatus
+from src.background_tasks.models.enums import TaskType
 from src.simulations.routes.v1.exceptions import (
     BadFilterFormat,
     InvalidColumn,
@@ -42,7 +53,7 @@ from src.simulations.routes.v1.schemas import (
     GetSimulationConfigurationResponse,
     GetSimulationConfigurationReportsResponse,
     GetSimulationConfigurationReportResponse,
-    GetTaskStatusResponse,
+    CreateAnimationResponse,
 )
 from src.simulations.db_utils.simulation_configurations import (
     get_simulation_configurations,
@@ -65,7 +76,6 @@ from src.simulations.routes.v1.utils import (
     _optimize_cost_minimization,
     _optimize_gradient_descent,
     _optimize_multi_objective,
-    _get_status_message,
 )
 
 router = APIRouter(tags=["v1", "simulations"], prefix="/v1/simulations")
@@ -213,6 +223,13 @@ async def create_simulation(
                 by_alias=True
             ),
         )
+        background_task = await create_background_task(
+            session,
+            task_id=task.id,
+            task_type=TaskType.SIMULATION,
+            subject_id=report.id,
+            user_id=uuid.UUID(authorize.get_jwt_subject()),
+        )
 
         logger.info(
             "Dispatched simulation task: report_id=%s, task_id=%s",
@@ -249,7 +266,7 @@ async def create_simulation(
     return CreateSimulationResponse(
         simulation_configuration_id=configuration.id,
         simulation_report_id=report.id,
-        task_id=task.id,
+        task_id=background_task.id,
     )
 
 
@@ -781,143 +798,193 @@ async def compare_with_theory(
 
 
 @router.get(
-    "/tasks/{task_id}/status",
-    response_model=GetTaskStatusResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get task execution status",
-    description="""
-    Check the status of a background simulation task.
-
-    **Task States:**
-    - **PENDING**: Task is waiting to be executed
-    - **STARTED**: Task is currently running
-    - **SUCCESS**: Task completed successfully
-    - **FAILURE**: Task failed with an error
-    - **RETRY**: Task is being retried after a failure
-    - **REVOKED**: Task was cancelled
-
-    Returns detailed status including progress information and results.
-    """,
+    "/{configuration_id}/reports/{report_id}/gantt",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {}}}},
+    summary="Generate Gantt chart visualization",
 )
-async def get_task_status(
-    task_id: str,
+async def get_gantt_chart(
+    configuration_id: uuid.UUID,
+    report_id: uuid.UUID,
     authorize: AuthJWT = Depends(),
+    session: AsyncSession = Depends(get_session),
+    width: int = Query(12, ge=4, le=20, description="Figure width in inches"),
+    height: int = Query(8, ge=4, le=16, description="Figure height in inches"),
 ):
-    """Get the status of a background simulation task.
+    """Generate Gantt chart from simulation report.
 
-    This endpoint queries the Celery result backend to check the current
-    state of a task. It provides real-time status updates for long-running
-    simulations.
+    Returns an image showing channel occupancy over time. Requires that
+    the simulation was run with collect_gantt_data=true.
+    """
+    """
+    Generate and return a Gantt chart for a completed simulation report.
+    """
+    authorize.jwt_required()
 
-    **Use Case:**
-    After creating a simulation (POST /simulations), use the returned task_id
-    to poll this endpoint and check when the simulation completes.
+    try:
+        report = await get_simulation_configuration_report_from_db(
+            session,
+            user_id=uuid.UUID(authorize.get_jwt_subject()),
+            report_id=report_id,
+            simulation_configuration_id=configuration_id,
+        )
+        configuration = await report.awaitable_attrs.configuration
+    except SimulationReportNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation report not found.",
+        )
 
-    Args:
-        task_id: The Celery task identifier returned from create_simulation.
-        authorize: JWT authentication dependency.
+    if report.status != ReportStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Report is not complete. Current status: {report.status}",
+        )
 
-    Returns:
-        GetTaskStatusResponse containing:
-            - task_id: The task identifier
-            - state: Current Celery state (PENDING, STARTED, SUCCESS, FAILURE)
-            - status: Human-readable status message
-            - result: Task result if completed (simulation metrics summary)
-            - progress: Progress information if task is running
-            - error: Error message if task failed
+    if not report.results or not report.results.get("replications"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No results found in report.",
+        )
 
-    Raises:
-        HTTPException 401: If authentication fails.
-        HTTPException 404: If task not found.
+    first_replication = report.results["replications"][0]
+    gantt_data = first_replication.get("gantt_chart")
 
-    Example:
-        ```
-        GET /api/v1/simulations/tasks/abc123-def456/status
+    if not gantt_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Gantt chart data found. Ensure simulation was run with 'collectGanttData=true'.",
+        )
 
-        Response:
-        {
-          "task_id": "abc123-def456",
-          "state": "STARTED",
-          "status": "Simulation in progress",
-          "progress": {
-            "current": 50,
-            "total": 100
-          }
-        }
-        ```
+    try:
+        gantt_items = [GanttChartItem(**item) for item in gantt_data]
+        num_channels = configuration.simulation_parameters.get("numChannels", 1)
+
+        image_buffer = SimulationVisualizer.plot_gantt_chart(
+            gantt_items=gantt_items,
+            num_channels=num_channels,
+            width=width,
+            height=height,
+        )
+    except Exception as e:
+        logger.exception(
+            "Failed to generate Gantt chart for report %s", report_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate visualization: {e}",
+        )
+
+    return Response(content=image_buffer.getvalue(), media_type="image/png")
+
+
+@router.post(
+    "/{configuration_id}/reports/{report_id}/animation",
+    response_model=CreateAnimationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request animation generation",
+)
+async def request_animation_generation(
+    configuration_id: uuid.UUID,
+    report_id: uuid.UUID,
+    authorize: AuthJWT = Depends(),
+    fps: int = Query(20, ge=5, le=60),
+    duration: int = Query(15, ge=5, le=60),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Dispatch a background task to generate an MP4 animation of the simulation.
+    This endpoint returns a task ID immediately. Use the task status endpoint
+    to check for completion, then use the GET endpoint to download the video.
     """
     authorize.jwt_required()
     user_id = authorize.get_jwt_subject()
 
-    logger.debug(
-        "Task status request: task_id=%s, user=%s",
-        task_id,
-        user_id,
-    )
-
     try:
-        result = AsyncResult(task_id, app=celery_app)
-
-        state = result.state
-        status_msg = _get_status_message(state)
-
-        response = GetTaskStatusResponse(
-            task_id=task_id,
-            state=state,
-            status=status_msg,
+        task = generate_animation_task.delay(
+            report_id=str(report_id),
+            configuration_id=str(configuration_id),
+            user_id=user_id,
+            fps=fps,
+            duration=duration,
         )
-
-        if state == "PENDING":
-            response.status = "Task is queued or does not exist"
-
-        elif state == "STARTED":
-            response.status = "Simulation is running"
-            if result.info:
-                response.progress = result.info
-
-        elif state == "SUCCESS":
-            response.status = "Simulation completed successfully"
-            response.result = result.result if result.result else None
-
-        elif state == "FAILURE":
-            response.status = "Simulation failed"
-            response.error = (
-                str(result.info) if result.info else "Unknown error"
-            )
-            logger.warning(
-                "Task %s failed: %s",
-                task_id,
-                response.error,
-            )
-
-        elif state == "RETRY":
-            response.status = "Simulation is being retried after an error"
-            if result.info:
-                response.error = (
-                    str(result.info)
-                    if isinstance(result.info, Exception)
-                    else str(result.info.get("exc", "Unknown error"))
-                )
-
-        elif state == "REVOKED":
-            response.status = "Simulation was cancelled"
-
-        logger.debug(
-            "Task status retrieved: task_id=%s, state=%s",
-            task_id,
-            state,
+        background_task = await create_background_task(
+            session,
+            task_id=task.id,
+            task_type=TaskType.ANIMATION,
+            user_id=uuid.UUID(user_id),
+            subject_id=report_id,
         )
-
-        return response
-
+        return CreateAnimationResponse(task_id=background_task.id)
     except Exception as e:
-        logger.error(
-            "Failed to get task status for task_id=%s: %s",
-            task_id,
-            e,
-            exc_info=True,
+        logger.exception(
+            "Failed to dispatch animation task for report %s", report_id
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve task status: {str(e)}",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to dispatch animation task: {e}",
         )
+
+
+@router.get(
+    "/animation/{task_id}",
+    response_class=FileResponse,
+    summary="Download generated animation",
+    responses={
+        200: {"content": {"video/mp4": {}}},
+        404: {"description": "Task not found or animation not ready"},
+    },
+)
+async def get_animation(
+    task_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    authorize: AuthJWT = Depends(),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Download a generated animation video file.
+    Poll the task status endpoint first. Once the state is 'SUCCESS',
+    use this endpoint with the task ID to retrieve the MP4 file.
+    """
+    authorize.jwt_required()
+    user_id = uuid.UUID(authorize.get_jwt_subject())
+
+    try:
+        background_task = await get_background_task(
+            session, task_id=task_id, user_id=user_id
+        )
+    except BackgroundTaskNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Background task not found.",
+        )
+
+    result = AsyncResult(background_task.task_id, app=celery_app)
+
+    if not result.ready():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Animation is still being generated or task ID is invalid.",
+        )
+    if result.state != "SUCCESS":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task failed and could not generate animation. Reason: {result.info}",
+        )
+
+    filepath = result.result.get("filepath")
+    if not filepath or not Path(filepath).exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Animation file not found. It may have expired or failed to save.",
+        )
+
+    background_tasks.add_task(
+        lambda p: Path(p).unlink(missing_ok=True), filepath
+    )
+
+    return FileResponse(
+        path=filepath,
+        media_type="video/mp4",
+        filename=f"simulation_{task_id}.mp4",
+    )
