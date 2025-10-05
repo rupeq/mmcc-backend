@@ -3,6 +3,7 @@ import logging
 import uuid
 from pathlib import Path
 
+import numpy as np
 from another_fastapi_jwt_auth import AuthJWT
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
@@ -17,7 +18,7 @@ from src.background_tasks.db_utils.background_tasks import (
 )
 from src.background_tasks.models.enums import TaskType
 from src.core.db_session import get_session
-from src.simulations.core.schemas import GanttChartItem
+from src.simulations.core.schemas import GanttChartItem, TemporalProfile
 from src.simulations.core.service_time_analysis import (
     analyze_service_times,
     create_summary_statistics_table,
@@ -41,6 +42,7 @@ from src.simulations.routes.v1.schemas import (
     QuantileStatisticsResponse,
     GoodnessOfFitResponse,
     CreateAnimationResponse,
+    GetTemporalAnalysis,
 )
 from src.simulations.routes.v1.utils import (
     extract_service_times_from_report,
@@ -724,3 +726,184 @@ async def get_animation(
         media_type="video/mp4",
         filename=f"simulation_{background_task_id}.mp4",
     )
+
+
+@router.get(
+    "/{simulation_configuration_id}/reports/{report_id}/temporal-analysis",
+    response_model=GetTemporalAnalysis,
+)
+async def get_temporal_analysis(
+    simulation_configuration_id: uuid.UUID,
+    report_id: uuid.UUID,
+    authorize: AuthJWT = Depends(),
+    session: AsyncSession = Depends(get_session),
+) -> GetTemporalAnalysis:
+    """Get temporal occupancy profile for a completed simulation.
+
+    Returns time-series metrics, phase analysis, peak detection,
+    and busy/idle period distributions.
+
+    Raises:
+        HTTPException 400: If temporal profiling wasn't enabled.
+        HTTPException 404: If report not found.
+    """
+    authorize.jwt_required()
+    user_id = uuid.UUID(authorize.get_jwt_subject())
+
+    try:
+        report = await get_simulation_configuration_report(
+            session,
+            simulation_configuration_id=simulation_configuration_id,
+            report_id=report_id,
+            user_id=user_id,
+            status=ReportStatus.COMPLETED,
+        )
+    except SimulationReportNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation report not found or not completed yet.",
+        )
+
+    results = report.results
+    if (
+        not results
+        or "temporal_profile" not in results.get("replications", [{}])[0]
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Temporal profiling was not enabled for this simulation",
+        )
+
+    temporal_data = results["replications"][0]["temporal_profile"]
+    return GetTemporalAnalysis(**temporal_data)
+
+
+@router.get(
+    "/{simulation_configuration_id}/reports/{report_id}/temporal-charts",
+)
+async def get_temporal_charts(
+    simulation_configuration_id: uuid.UUID,
+    report_id: uuid.UUID,
+    authorize: AuthJWT = Depends(),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Generate temporal analysis charts.
+
+    Returns base64-encoded images for:
+    - Utilization over time
+    - Phase comparison (if non-stationary)
+    - Peak/valley highlights
+    - Busy/idle distributions
+    """
+    authorize.jwt_required()
+    user_id = uuid.UUID(authorize.get_jwt_subject())
+
+    try:
+        report = await get_simulation_configuration_report(
+            session,
+            simulation_configuration_id=simulation_configuration_id,
+            report_id=report_id,
+            user_id=user_id,
+            status=ReportStatus.COMPLETED,
+        )
+    except SimulationReportNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation report not found or not completed yet.",
+        )
+
+    temporal_data = report.results["replications"][0]["temporal_profile"]
+    profile = TemporalProfile(**temporal_data)
+
+    charts = {}
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    times = [
+        (m.time_window.start_time + m.time_window.end_time) / 2
+        for m in profile.temporal_metrics
+    ]
+    utils = [m.avg_utilization for m in profile.temporal_metrics]
+
+    ax.plot(times, utils, "b-", linewidth=2, label="Utilization")
+    ax.axhline(
+        0.7, color="r", linestyle="--", alpha=0.5, label="Peak Threshold"
+    )
+    ax.axhline(
+        0.3, color="g", linestyle="--", alpha=0.5, label="Valley Threshold"
+    )
+
+    for period in profile.peak_periods:
+        color = "red" if period.period_type == "peak" else "green"
+        ax.axvspan(period.start_time, period.end_time, alpha=0.2, color=color)
+
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Utilization")
+    ax.set_title("Channel Utilization Over Time")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    charts["utilization_timeseries"] = figure_to_base64(fig)
+    plt.close(fig)
+
+    if profile.phase_metrics:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        phases = [f"Phase {p.phase_index}" for p in profile.phase_metrics]
+        rejection_probs = [
+            p.rejection_probability for p in profile.phase_metrics
+        ]
+        utilizations = [p.avg_utilization for p in profile.phase_metrics]
+
+        x = np.arange(len(phases))
+        width = 0.35
+
+        ax.bar(
+            x - width / 2, rejection_probs, width, label="Rejection Probability"
+        )
+        ax.bar(x + width / 2, utilizations, width, label="Utilization")
+
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Metric Value")
+        ax.set_title("Metrics by Non-Stationary Phase")
+        ax.set_xticks(x)
+        ax.set_xticklabels(phases)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        charts["phase_comparison"] = figure_to_base64(fig)
+        plt.close(fig)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    for stats in profile.busy_idle_stats:
+        if stats.busy_periods:
+            axes[0].hist(
+                stats.busy_periods,
+                bins=20,
+                alpha=0.5,
+                label=f"Channel {stats.channel_id}",
+            )
+        if stats.idle_periods:
+            axes[1].hist(
+                stats.idle_periods,
+                bins=20,
+                alpha=0.5,
+                label=f"Channel {stats.channel_id}",
+            )
+
+    axes[0].set_xlabel("Duration (s)")
+    axes[0].set_ylabel("Frequency")
+    axes[0].set_title("Busy Period Distribution")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    axes[1].set_xlabel("Duration (s)")
+    axes[1].set_ylabel("Frequency")
+    axes[1].set_title("Idle Period Distribution")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    charts["busy_idle_distributions"] = figure_to_base64(fig)
+    plt.close(fig)
+
+    return charts

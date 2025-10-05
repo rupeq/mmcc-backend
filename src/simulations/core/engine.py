@@ -23,6 +23,10 @@ from src.simulations.core.schemas import (
     SweepResponse,
     SweepRequest,
 )
+from src.simulations.core.temporal_analysis import (
+    TemporalCollector,
+    analyze_temporal_profile,
+)
 from src.simulations.core.utils import set_nested_attr
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,21 @@ class ChannelManager:
 
     def allocate_channel(self, channel_id: int, free_at_time: float):
         heapq.heappush(self.free_heap, (free_at_time, channel_id))
+
+    def get_busy_channels_count(self, current_time: float) -> int:
+        """Get the number of currently busy channels.
+
+        Args:
+            current_time: Current simulation time.
+
+        Returns:
+            Number of channels that are busy (free_at_time > current_time).
+        """
+        # Count channels in heap that are still busy
+        busy_count = sum(
+            1 for free_at, _ in self.free_heap if free_at > current_time
+        )
+        return busy_count
 
     def get_utilization_stats(self, simulation_time: float) -> dict[str, float]:
         """Calculate channel utilization statistics"""
@@ -144,6 +163,15 @@ class Simulator:
         self._events_processed = 0
         self._max_queue_size = 0
 
+        self.temporal_collector: TemporalCollector | None = None
+        if params.collect_temporal_profile:
+            self.temporal_collector = TemporalCollector(
+                num_channels=params.num_channels,
+                simulation_time=params.simulation_time,
+                window_size=params.temporal_window_size,
+                snapshot_interval=params.temporal_snapshot_interval,
+            )
+
         logger.debug(
             "Initialized simulator: channels=%d, sim_time=%.2f, "
             "collect_gantt=%s (max=%s), collect_service_times=%s (max=%s)",
@@ -218,6 +246,14 @@ class Simulator:
             if self.clock > self.params.simulation_time:
                 break
 
+            if self.temporal_collector:
+                busy_channels = self.channels.get_busy_channels_count(
+                    self.clock
+                )
+                self.temporal_collector.record_occupancy_snapshot(
+                    self.clock, busy_channels
+                )
+
             progress_pct = self.clock / self.params.simulation_time
             if (
                 self.progress_callback is not None
@@ -268,6 +304,9 @@ class Simulator:
             self._max_queue_size,
         )
 
+        if self.temporal_collector:
+            self.temporal_collector.finalize(self.clock)
+
         return self._calculate_results()
 
     def _schedule_event(
@@ -291,6 +330,10 @@ class Simulator:
         """
         self.stats.total_requests += 1
 
+        if self.temporal_collector:
+            self.temporal_collector.record_arrival(self.clock)
+            self.temporal_collector.record_phase_arrival()
+
         # Schedule next arrival
         self._schedule_event(
             delay=self.arrival_distribution.generate(),
@@ -311,6 +354,14 @@ class Simulator:
         """Process an accepted request"""
         self.stats.processed_requests += 1
         service_time = self.service_distribution.generate()
+
+        if self.temporal_collector:
+            self.temporal_collector.record_service_start(
+                self.clock, channel_id, service_time
+            )
+            self.temporal_collector.record_phase_processed(
+                channel_id, service_time
+            )
 
         # Record service time (respects limits)
         self.stats.record_service_time(service_time)
@@ -351,6 +402,11 @@ class Simulator:
     def _reject_request(self) -> None:
         """Handle a rejected request (all channels busy)"""
         self.stats.rejected_requests += 1
+
+        if self.temporal_collector:
+            self.temporal_collector.record_rejected(self.clock)
+            self.temporal_collector.record_phase_rejected()
+
         logger.debug(
             "Request rejected: all %d channels busy at t=%.4f",
             self.params.num_channels,
@@ -364,11 +420,13 @@ class Simulator:
         Note: In G/G/c/c system, departures just free up channels.
         No queue to process.
         """
+        if self.temporal_collector and channel_id is not None:
+            self.temporal_collector.record_processed(self.clock, channel_id)
+
         if channel_id is not None:
             logger.debug(
                 "Request departed: channel=%d, t=%.4f", channel_id, self.clock
             )
-        # Channel is automatically freed by time-based logic
 
     def _calculate_results(self) -> SimulationResult:
         """Calculate final simulation results"""
@@ -421,9 +479,14 @@ class Simulator:
             metrics.avg_channel_utilization,
         )
 
+        temporal_profile = None
+        if self.temporal_collector:
+            temporal_profile = analyze_temporal_profile(self.temporal_collector)
+
         return SimulationResult(
             metrics=metrics,
             gantt_chart=self.stats.gantt_items,
+            temporal_profile=temporal_profile,
             raw_service_times=self.stats.service_times
             if self.params.collect_service_times
             else None,
