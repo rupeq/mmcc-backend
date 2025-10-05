@@ -169,9 +169,8 @@ class TestMultiObjectiveOptimization:
 class TestRateLimiting:
     """Test rate limiting for optimization endpoint."""
 
-    @patch("src.simulations.routes.v1.utils.binary_search_channels")
-    @patch("src.simulations.routes.v1.routes.check_rate_limit")
-    def test_rate_limit_enforced(self, mock_rate_limit, mock_optimize, client):
+    @patch("src.simulations.routes.v1.optimization_routes.check_rate_limit")
+    def test_rate_limit_enforced(self, mock_rate_limit, client):
         """Test that rate limiting is enforced."""
         from fastapi import HTTPException
 
@@ -196,7 +195,7 @@ class TestErrorHandling:
 
     @patch("src.simulations.routes.v1.utils.binary_search_channels")
     @patch(
-        "src.simulations.routes.v1.routes.check_rate_limit",
+        "src.simulations.routes.v1.optimization_routes.check_rate_limit",
         return_value=None,
     )
     def test_timeout_handling(self, _, mock_optimize, client):
@@ -215,7 +214,7 @@ class TestErrorHandling:
 
     @patch("src.simulations.routes.v1.utils.binary_search_channels")
     @patch(
-        "src.simulations.routes.v1.routes.check_rate_limit",
+        "src.simulations.routes.v1.optimization_routes.check_rate_limit",
         return_value=None,
     )
     def test_validation_error_handling(self, _, mock_optimize, client):

@@ -25,21 +25,28 @@ async def get_simulation_configuration_report(
     user_id: uuid.UUID,
     report_id: uuid.UUID,
     simulation_configuration_id: uuid.UUID,
+    status: ReportStatus | None = None,
 ) -> SimulationReport:
     logger.debug("Getting simulation report with id %s", report_id)
+
+    filters = [
+        SimulationReport.id == report_id,
+        SimulationReport.is_active == True,
+        SimulationConfiguration.user_id == user_id,
+        SimulationConfiguration.id == simulation_configuration_id,
+        SimulationConfiguration.is_active == True,
+    ]
+
+    if status is not None:
+        filters.append(SimulationReport.status == status)
+
     query = await session.execute(
         select(SimulationReport)
         .join(
             SimulationConfiguration,
             SimulationConfiguration.id == SimulationReport.configuration_id,
         )
-        .where(
-            SimulationReport.id == report_id,
-            SimulationReport.is_active == True,
-            SimulationConfiguration.user_id == user_id,
-            SimulationConfiguration.id == simulation_configuration_id,
-            SimulationConfiguration.is_active == True,
-        )
+        .where(*filters)
     )
     report = query.scalars().one_or_none()
 
