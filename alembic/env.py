@@ -10,8 +10,9 @@ from alembic import context
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from src.config import get_settings
-from src.users.models.users import *
-from src.simulations.models.simulations import *
+from src.users.models.users import *  # noqa
+from src.simulations.models.simulations import *  # noqa
+from src.background_tasks.models.background_tasks import *  # noqa
 
 load_dotenv(os.path.join("..", "src", ".service.env"))
 

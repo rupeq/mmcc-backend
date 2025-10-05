@@ -1,3 +1,4 @@
+from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, declared_attr
 from sqlalchemy import MetaData
 
@@ -12,7 +13,7 @@ convention = {
 metadata = MetaData(naming_convention=convention)
 
 
-class Base(DeclarativeBase):
+class Base(AsyncAttrs, DeclarativeBase):
     """
     Base class for SQLAlchemy declarative models, providing naming conventions and __tablename__.
     """

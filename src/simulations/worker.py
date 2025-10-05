@@ -36,6 +36,8 @@ from src.simulations.tasks.db_session import (
 )
 from src.users.models.users import *  # noqa: F401
 from src.simulations.models.simulations import *  # noqa: F401
+from src.background_tasks.models.background_tasks import *  # noqa: F401
+
 
 logger = logging.getLogger(__name__)
 task_logger = get_task_logger(__name__)
@@ -52,6 +54,7 @@ celery_app = Celery(
         "src.simulations.tasks.simulations",
         "src.simulations.tasks.cleanup",
         "src.simulations.tasks.dlq",
+        "src.simulations.tasks.animation",
     ],
 )
 
@@ -63,11 +66,14 @@ celery_app.conf.task_routes = {
         "routing_key": "simulations:10",
         "priority": 5,
     },
+    "simulations.generate_animation": {
+        "queue": "simulations:10",
+        "routing_key": "simulations:10",
+    },
     "simulations.dlq": {
         "queue": "simulations_dlq",
         "routing_key": "simulations.dlq",
     },
-    # Add route for cleanup task
     "simulations.cleanup_stale_reports": {
         "queue": "simulations:10",
         "routing_key": "simulations:10",
