@@ -1,5 +1,3 @@
-"""Integration tests for end-to-end task flow."""
-
 import uuid
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -29,13 +27,15 @@ def mock_celery_task():
 class TestEndToEndTaskFlow:
     """Test complete task flow from API to completion."""
 
+    @patch("src.simulations.routes.v1.routes.create_background_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     def test_api_dispatches_task_successfully(
-        self, mock_create, mock_celery_task, client
+        self, mock_create, mock_create_bg, mock_celery_task, client
     ):
         """Test that API successfully dispatches task to Celery."""
         from another_fastapi_jwt_auth import AuthJWT
 
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
         mock_auth = MagicMock()
         mock_auth.get_jwt_subject.return_value = str(uuid.uuid4())
         app.dependency_overrides[AuthJWT] = lambda: mock_auth
@@ -77,8 +77,9 @@ class TestEndToEndTaskFlow:
     @pytest.mark.asyncio
     @patch("src.simulations.tasks.simulations.run_replications")
     @patch("src.simulations.tasks.simulations.update_simulation_report_results")
+    @patch("src.simulations.tasks.simulations.create_task_manager")
     async def test_task_updates_database_on_completion(
-        self, mock_update, mock_run
+        self, mock_task_manager, mock_update, mock_run
     ):
         """Test that task updates database with results."""
         from src.simulations.tasks.simulations import SimulationTask
@@ -91,6 +92,20 @@ class TestEndToEndTaskFlow:
             "arrivalProcess": {"distribution": "exponential", "rate": 1.0},
             "serviceProcess": {"distribution": "exponential", "rate": 2.0},
         }
+
+        # Mock task manager
+        mock_manager = MagicMock()
+        mock_manager.report_started = MagicMock()
+        mock_manager.report_success = MagicMock(
+            return_value={
+                "total_requests": 50,
+                "processed_requests": 40,
+                "rejected_requests": 10,
+                "rejection_probability": 0.2,
+                "num_replications": 1,
+            }
+        )
+        mock_task_manager.return_value = mock_manager
 
         # Mock simulation results
         mock_response = MagicMock()
@@ -115,20 +130,45 @@ class TestEndToEndTaskFlow:
             task = SimulationTask()
             result = await task.execute_simulation(report_id, params)
 
-            # Verify database update was called
+            # Verify simulation was executed
+            mock_run.assert_called_once()
+
+            # Verify results were stored
             mock_update.assert_called_once()
-            call_args = mock_update.call_args.kwargs
-            assert call_args["status"] == ReportStatus.COMPLETED
-            assert call_args["results"] == {"test": "results"}
+            call_args = mock_update.call_args
+            assert call_args.kwargs["report_id"] == uuid.UUID(report_id)
+            assert call_args.kwargs["status"] == ReportStatus.COMPLETED
+            assert call_args.kwargs["results"] == {"test": "results"}
+            assert "completed_at" in call_args.kwargs
+
+            # Verify return value
+            assert result["total_requests"] == 50
+            assert result["processed_requests"] == 40
+            assert result["rejected_requests"] == 10
 
 
 class TestConcurrentTaskExecution:
     """Test handling of multiple concurrent tasks."""
 
     @pytest.mark.asyncio
-    async def test_handles_multiple_concurrent_tasks(self):
+    @patch("src.simulations.tasks.simulations.create_task_manager")
+    async def test_handles_multiple_concurrent_tasks(self, mock_task_manager):
         """Test that multiple tasks can execute concurrently."""
         from src.simulations.tasks.simulations import SimulationTask
+
+        # Mock task manager
+        mock_manager = MagicMock()
+        mock_manager.report_started = MagicMock()
+        mock_manager.report_success = MagicMock(
+            return_value={
+                "total_requests": 50,
+                "processed_requests": 40,
+                "rejected_requests": 10,
+                "rejection_probability": 0.2,
+                "num_replications": 1,
+            }
+        )
+        mock_task_manager.return_value = mock_manager
 
         # Create multiple tasks
         tasks = []
@@ -182,9 +222,25 @@ class TestTaskErrorRecovery:
     """Test error recovery in task execution."""
 
     @pytest.mark.asyncio
-    async def test_recovers_from_transient_errors(self):
+    @patch("src.simulations.tasks.simulations.create_task_manager")
+    async def test_recovers_from_transient_errors(self, mock_task_manager):
         """Test that tasks recover from transient errors."""
         from src.simulations.tasks.simulations import SimulationTask
+
+        # Mock task manager
+        mock_manager = MagicMock()
+        mock_manager.report_started = MagicMock()
+        mock_manager.report_failure = MagicMock()
+        mock_manager.report_success = MagicMock(
+            return_value={
+                "total_requests": 50,
+                "processed_requests": 40,
+                "rejected_requests": 10,
+                "rejection_probability": 0.2,
+                "num_replications": 1,
+            }
+        )
+        mock_task_manager.return_value = mock_manager
 
         report_id = str(uuid.uuid4())
         params = {
@@ -219,6 +275,9 @@ class TestTaskErrorRecovery:
             patch(
                 "src.simulations.tasks.simulations.get_worker_session_factory"
             ) as mock_factory,
+            patch(
+                "src.simulations.tasks.simulations.update_simulation_report_status"
+            ),
         ):
             mock_session = AsyncMock()
             mock_factory.return_value.return_value.__aenter__.return_value = (

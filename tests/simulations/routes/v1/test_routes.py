@@ -226,11 +226,12 @@ class TestCreateSimulation:
             },
         }
 
-    @patch(
-        "src.simulations.routes.v1.routes.run_simulation_task"
-    )  # ✅ ADD THIS
+    @patch("src.simulations.routes.v1.routes.create_background_task")
+    @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
-    def test_create_simulation_success(self, mock_create, mock_task, client):
+    def test_create_simulation_success(
+        self, mock_create, mock_task, mock_create_bg, client
+    ):
         """Test successful simulation creation."""
         config_id = uuid.uuid4()
         report_id = uuid.uuid4()
@@ -242,8 +243,8 @@ class TestCreateSimulation:
             id = report_id
 
         mock_create.return_value = (MockConfig(), MockReport())
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
 
-        # ✅ Mock the Celery task
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"
         mock_task.delay.return_value = mock_task_result
@@ -319,12 +320,11 @@ class TestCreateSimulation:
         response = client.post(BASE_URL, json=body)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    @patch(
-        "src.simulations.routes.v1.routes.run_simulation_task"
-    )  # ✅ ADD THIS
+    @patch("src.simulations.routes.v1.routes.create_background_task")
+    @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     def test_create_simulation_without_description(
-        self, mock_create, mock_task, client
+        self, mock_create, mock_task, mock_create_bg, client
     ):
         """Test creation without optional description."""
         body = self.make_request_body()
@@ -334,8 +334,8 @@ class TestCreateSimulation:
             MagicMock(id=uuid.uuid4()),
             MagicMock(id=uuid.uuid4()),
         )
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
 
-        # ✅ Mock the Celery task
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"
         mock_task.delay.return_value = mock_task_result
@@ -655,13 +655,14 @@ class TestIntegrationScenarios:
         assert call_args["page"] == 1
         assert call_args["limit"] == 10
 
+    @patch("src.simulations.routes.v1.routes.create_background_task")
     @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     @patch(
         "src.simulations.routes.v1.routes.get_simulation_configuration_from_db"
     )
     def test_create_then_retrieve(
-        self, mock_get, mock_create, mock_task, client
+        self, mock_get, mock_create, mock_task, mock_create_bg, client
     ):
         """Test creating a simulation and then retrieving it."""
         config_id = uuid.uuid4()
@@ -677,8 +678,8 @@ class TestIntegrationScenarios:
 
         mock_create.return_value = (MockConfig(), MockReport())
         mock_get.return_value = MockConfig()
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
 
-        # ✅ Mock the Celery task
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"
         mock_task.delay.return_value = mock_task_result
@@ -734,10 +735,11 @@ class TestEdgeCasesAndBoundaries:
         data = response.json()
         assert data["items"] == []
 
+    @patch("src.simulations.routes.v1.routes.create_background_task")
     @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     def test_create_simulation_with_all_distributions(
-        self, mock_create, mock_task, client
+        self, mock_create, mock_task, mock_create_bg, client
     ):
         """Test creating simulations with different distributions."""
         distributions = [
@@ -758,6 +760,7 @@ class TestEdgeCasesAndBoundaries:
             MagicMock(id=uuid.uuid4()),
             MagicMock(id=uuid.uuid4()),
         )
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
 
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"
@@ -779,12 +782,14 @@ class TestEdgeCasesAndBoundaries:
                 f"Failed for distribution: {dist['distribution']}"
             )
 
+    @patch("src.simulations.routes.v1.routes.create_background_task")
     @patch("src.simulations.routes.v1.routes.run_simulation_task")
     @patch("src.simulations.routes.v1.routes.create_simulation_configuration")
     def test_create_simulation_with_arrival_schedule(
         self,
         mock_create,
         mock_task,
+        mock_create_bg,
         client,
     ):
         """Test creating simulation with non-stationary arrivals."""
@@ -807,6 +812,7 @@ class TestEdgeCasesAndBoundaries:
             MagicMock(id=uuid.uuid4()),
             MagicMock(id=uuid.uuid4()),
         )
+        mock_create_bg.return_value = MagicMock(id=uuid.uuid4())
 
         mock_task_result = MagicMock()
         mock_task_result.id = "test-task-id"

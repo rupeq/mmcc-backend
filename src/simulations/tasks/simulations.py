@@ -287,3 +287,14 @@ def run_simulation_task(
             raise self.retry(exc=exc, countdown=self.default_retry_delay)
 
         raise
+
+
+def calculate_task_timeout(simulation_params: dict) -> int:
+    """Calculate appropriate timeout based on simulation size"""
+
+    num_channels = simulation_params.get("numChannels", 1)
+    sim_time = simulation_params.get("simulationTime", 100)
+    num_reps = simulation_params.get("numReplications", 1)
+
+    base_timeout = int(sim_time * num_reps * num_channels / 100)
+    return max(300, min(base_timeout, 7200))

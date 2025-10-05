@@ -1,8 +1,9 @@
+# tests/simulations/worker/test_task_execution.py
+
 """Comprehensive tests for simulation task execution."""
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from src.simulations.tasks.simulations import (
@@ -47,7 +48,6 @@ class TestTaskTimeoutCalculation:
             "numReplications": 10,
         }
         timeout = calculate_task_timeout(params)
-
         # 1000 * 10 * 2 / 100 = 200 seconds, but min is 300
         assert timeout == 300  # Enforces minimum
 
@@ -87,12 +87,27 @@ class TestSimulationTaskExecution:
     """Test SimulationTask.execute_simulation method."""
 
     @pytest.mark.asyncio
+    @patch("src.simulations.tasks.simulations.create_task_manager")
     async def test_successful_simulation_execution(
-        self, valid_simulation_params, mock_session_factory
+        self, mock_task_manager, valid_simulation_params, mock_session_factory
     ):
         """Test successful simulation execution and result storage."""
         mock_factory, mock_session = mock_session_factory
         report_id = str(uuid.uuid4())
+
+        # Mock task manager
+        mock_manager = MagicMock()
+        mock_manager.report_started = MagicMock()
+        mock_manager.report_success = MagicMock(
+            return_value={
+                "total_requests": 100,
+                "processed_requests": 80,
+                "rejected_requests": 20,
+                "rejection_probability": 0.2,
+                "num_replications": 5,
+            }
+        )
+        mock_task_manager.return_value = mock_manager
 
         task = SimulationTask()
 
@@ -139,7 +154,10 @@ class TestSimulationTaskExecution:
             assert result["rejected_requests"] == 20
 
     @pytest.mark.asyncio
-    async def test_validation_error_handling(self, mock_session_factory):
+    @patch("src.simulations.tasks.simulations.create_task_manager")
+    async def test_validation_error_handling(
+        self, mock_task_manager, mock_session_factory
+    ):
         """Test handling of invalid simulation parameters."""
         mock_factory, mock_session = mock_session_factory
         report_id = str(uuid.uuid4())
@@ -147,6 +165,12 @@ class TestSimulationTaskExecution:
             "numChannels": -1,  # Invalid
             "simulationTime": 100.0,
         }
+
+        # Mock task manager
+        mock_manager = MagicMock()
+        mock_manager.report_started = MagicMock()
+        mock_manager.report_failure = MagicMock()
+        mock_task_manager.return_value = mock_manager
 
         task = SimulationTask()
 
@@ -161,11 +185,17 @@ class TestSimulationTaskExecution:
         ):
             result = await task.execute_simulation(report_id, invalid_params)
 
-            # Should mark as FAILED
-            mock_update.assert_called_once()
-            call_args = mock_update.call_args
-            assert call_args.kwargs["status"] == ReportStatus.FAILED
-            assert "Invalid parameters" in call_args.kwargs["error_message"]
+            # Should mark as FAILED (called twice: RUNNING then FAILED)
+            assert mock_update.call_count == 2
+
+            # First call: RUNNING
+            first_call = mock_update.call_args_list[0]
+            assert first_call.kwargs["status"] == ReportStatus.RUNNING
+
+            # Second call: FAILED
+            second_call = mock_update.call_args_list[1]
+            assert second_call.kwargs["status"] == ReportStatus.FAILED
+            assert "Invalid parameters" in second_call.kwargs["error_message"]
 
             # Should return zero metrics
             assert result["total_requests"] == 0
