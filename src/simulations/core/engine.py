@@ -433,15 +433,14 @@ class Simulator:
 def run_replications(
     params: SimulationRequest, task: Task | None = None
 ) -> SimulationResponse:
-    """
-    Run multiple replications of the simulation and aggregate results.
+    """Run multiple replications of the simulation and aggregate results.
 
     Args:
-        params: Simulation configuration
-        task: Optional task to track progress
+        params: Simulation configuration.
+        task: Optional Celery task for progress reporting.
 
     Returns:
-        SimulationResponse with aggregated metrics and individual replications
+        SimulationResponse with aggregated metrics and individual replications.
     """
     logger.info(
         "Running %d replications with seed=%s",
@@ -452,30 +451,39 @@ def run_replications(
     current_replication = [0]
 
     def progress_callback(progress: float, details: dict):
-        """Report progress to Celery."""
+        """Report progress to Celery using standardized format."""
+        if not task:
+            return
+
         overall_progress = (
             current_replication[0] + progress
         ) / params.num_replications
 
         task.update_state(
-            state="STARTED",
+            state="PROGRESS",
             meta={
-                "status": "running",
-                "progress": overall_progress,
+                "status": f"Processing replication {current_replication[0] + 1}/{params.num_replications}",
+                "task_type": "simulation",
+                "progress": {
+                    "current": current_replication[0] + progress,
+                    "total": params.num_replications,
+                    "percent": round(overall_progress * 100, 2),
+                    "message": f"Simulation time: {details.get('current_time', 0):.1f}/{details.get('total_time', 0):.1f}",
+                },
                 "current_replication": current_replication[0] + 1,
                 "total_replications": params.num_replications,
                 "replication_progress": progress,
-                "simulation_time": details.get("current_time"),
-                "total_time": details.get("total_time"),
                 "events_processed": details.get("events_processed"),
-                "requests_so_far": details.get("total_requests"),
+                "total_requests": details.get("total_requests"),
+                "processed_requests": details.get("processed_requests"),
+                "rejected_requests": details.get("rejected_requests"),
             },
         )
 
     replication_results = []
-
     for i in range(params.num_replications):
-        # Each replication gets a different seed (if seed is set)
+        current_replication[0] = i
+
         if params.random_seed is not None:
             sim_params = params.model_copy(
                 update={"random_seed": params.random_seed + i}, deep=True

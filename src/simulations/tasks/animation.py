@@ -1,3 +1,5 @@
+"""Animation generation task with standardized state management."""
+
 import logging
 import uuid
 from pathlib import Path
@@ -6,6 +8,7 @@ from celery import Task
 
 from src.simulations.worker import celery_app, worker_settings
 from src.simulations.tasks.db_session import get_worker_session
+from src.simulations.tasks.state_manager import create_task_manager
 from src.simulations.db_utils.simulation_reports import (
     get_simulation_configuration_report,
 )
@@ -14,7 +17,6 @@ from src.simulations.core.visualization import SimulationVisualizer
 
 
 logger = logging.getLogger(__name__)
-
 
 CACHE_DIR = Path("/tmp/simulation_cache/animations")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,36 +30,40 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
     acks_late=True,
     reject_on_worker_lost=True,
     track_started=True,
-    on_failure=lambda self, exc, task_id, args, kwargs, _: (
-        celery_app.send_task(
-            "simulations.dlq",
-            args=[task_id, args, kwargs, str(exc)],
-            queue="simulations_dlq",
-        )
-    ),
     soft_time_limit=None,
     time_limit=None,
 )
 def generate_animation_task(
-    self: Task, report_id: str, configuration_id: str, user_id: str, **kwargs
+    self: Task,
+    report_id: str,
+    configuration_id: str,
+    user_id: str,
+    **kwargs,
 ):
-    """
-    Celery task to generate and save a simulation animation.
+    """Generate and save a simulation animation.
 
     Args:
-        self: Task.
-        report_id: The ID of the simulation report.
-        configuration_id: The ID of the parent configuration.
-        user_id: The ID of the user requesting the animation.
+        self: Task instance.
+        report_id: Simulation report ID.
+        configuration_id: Parent configuration ID.
+        user_id: User ID requesting the animation.
         **kwargs: Additional parameters like fps and duration.
 
     Returns:
-        A dictionary containing the path to the saved video file.
+        Dictionary containing the path to the saved video file.
     """
+    state_manager = create_task_manager(self, "animation")
+    state_manager.report_started("Fetching simulation data...")
+
     logger.info("Starting animation task for report %s", report_id)
-    self.update_state(state="STARTED", meta={"status": "Fetching data..."})
 
     async def _run():
+        state_manager.report_progress(
+            current=1,
+            total=3,
+            message="Loading simulation results...",
+        )
+
         async with get_worker_session() as session:
             report = await get_simulation_configuration_report(
                 session,
@@ -69,6 +75,7 @@ def generate_animation_task(
             gantt_data = report.results.get("replications", [{}])[0].get(
                 "gantt_chart"
             )
+
             if not gantt_data:
                 raise ValueError("Report contains no Gantt chart data.")
 
@@ -78,29 +85,42 @@ def generate_animation_task(
             num_channels = sim_params.get("numChannels", 1)
             total_time = sim_params.get("simulationTime", 100)
 
-            output_path = CACHE_DIR / f"{self.request.id}.mp4"
+        state_manager.report_progress(
+            current=2,
+            total=3,
+            message="Generating video frames...",
+        )
 
-            self.update_state(
-                state="PROGRESS", meta={"status": "Generating video..."}
-            )
-            SimulationVisualizer.animate_gantt_chart(
-                gantt_items=gantt_items,
-                num_channels=num_channels,
-                total_time=total_time,
-                filepath=str(output_path),
-                fps=kwargs.get("fps", 20),
-                duration_sec=kwargs.get("duration", 15),
-            )
+        output_path = CACHE_DIR / f"{self.request.id}.mp4"
 
-            logger.info("Animation saved to %s", output_path)
-            self.update_state(state="SUCCESS")
-            return {"filepath": str(output_path)}
+        SimulationVisualizer.animate_gantt_chart(
+            gantt_items=gantt_items,
+            num_channels=num_channels,
+            total_time=total_time,
+            filepath=str(output_path),
+            fps=kwargs.get("fps", 20),
+            duration_sec=kwargs.get("duration", 15),
+        )
+
+        logger.info("Animation saved to %s", output_path)
+
+        state_manager.report_progress(
+            current=3,
+            total=3,
+            message="Animation complete",
+        )
+
+        result = {"filepath": str(output_path)}
+        return state_manager.report_success(
+            result=result,
+            summary=f"Animation generated: {output_path.name}",
+        )
 
     try:
         import asyncio
 
         return asyncio.run(_run())
-    except Exception:
+    except Exception as e:
         logger.exception("Animation task failed for report %s", report_id)
-        self.update_state(state="FAILURE")
+        state_manager.report_failure(e)
         raise
