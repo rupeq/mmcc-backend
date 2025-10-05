@@ -70,6 +70,7 @@ class EmpiricalParams(BaseModel):
     data: list[float] = Field(
         ...,
         min_length=2,
+        max_length=100_000,
         description="Observed data points (minimum 2 values)",
     )
     method: Literal["kde", "inverse_transform"] = Field(
